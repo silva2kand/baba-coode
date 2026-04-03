@@ -271,6 +271,34 @@ def save_provider_settings(
     return reload_config()
 
 
+def save_provider_profile(
+    provider_type: ProviderType,
+    base_url: str,
+    model: str,
+    api_key: str = "",
+) -> "BabaConfig":
+    env_path = _local_env_path()
+    values = _read_env_map(env_path)
+    prefix = _provider_prefix(provider_type)
+
+    values[f"{prefix}_BASE_URL"] = base_url.strip()
+    values[f"{prefix}_MODEL"] = model.strip()
+
+    normalized_key = api_key.strip()
+    if normalized_key:
+        values[f"{prefix}_API_KEY"] = normalized_key
+    elif provider_type in {ProviderType.JAN, ProviderType.OLLAMA, ProviderType.LM_STUDIO}:
+        values[f"{prefix}_API_KEY"] = "not-needed"
+
+    lines = [f"{key}={value}" for key, value in sorted(values.items())]
+    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    for key, value in values.items():
+        os.environ[key] = value
+
+    return reload_config()
+
+
 def save_enabled_provider_types(
     enabled_providers: tuple[ProviderType, ...],
 ) -> "BabaConfig":

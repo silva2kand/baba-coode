@@ -25,6 +25,7 @@ try:
         get_enabled_provider_types,
         provider_display_name,
         save_provider_settings,
+        save_provider_profile,
         save_enabled_provider_types,
         supported_provider_types,
         LOCAL_PROVIDER_TYPES,
@@ -49,6 +50,23 @@ try:
     from src.parity_audit import run_parity_audit
     from src.runtime import PortRuntime
     from src.models import UsageSummary
+    from src.services.business_brain import (
+        ensure_business_brain_db,
+        get_business_brain_db_path,
+        get_business_brain_inbox,
+        business_brain_schema_overview,
+        ingest_business_brain_path,
+        get_business_brain_overview,
+    )
+    from src.services.reasoning_sandbox import (
+        ensure_reasoning_sample_tasks,
+        list_reasoning_tasks,
+        load_reasoning_task,
+        build_reasoning_chain,
+        build_model_evaluator,
+        build_reasoning_sandbox_report,
+        score_reasoning_answer,
+    )
 
     HAS_SRC_MODULES = True
 except ImportError:
@@ -617,6 +635,196 @@ def detect_claw_runtime(profile: dict[str, str]) -> str | None:
         return None
     executable = launch_command.split()[0].strip('"')
     return shutil.which(executable)
+
+
+LOCAL_MODEL_ROUTING_PRESETS = {
+    "qwen_local": {
+        "label": "Qwen Local",
+        "description": "Pure Qwen-focused routing across Ollama, LM Studio, and Jan.",
+        "active_provider": ProviderType.OLLAMA,
+        "active_model": "qwen3.5:latest",
+        "fallback_order": (ProviderType.LM_STUDIO, ProviderType.JAN),
+        "local_priority": ["ollama", "lm_studio", "jan"],
+        "profiles": {
+            ProviderType.OLLAMA: {
+                "base_url": "http://localhost:11434/v1",
+                "model": "qwen3.5:latest",
+            },
+            ProviderType.LM_STUDIO: {
+                "base_url": "http://localhost:1234/v1",
+                "model": "qwen3.5-9b-claude-4.6-opus-reasoning-distilled",
+            },
+            ProviderType.JAN: {
+                "base_url": "http://localhost:1337/v1",
+                "model": "Qwen3_5-9B_Q4_K_M",
+            },
+        },
+        "roles": {
+            "router": {
+                "provider": ProviderType.OLLAMA,
+                "model": "sorc/qwen3.5-claude-4.6-opus:0.8b",
+                "purpose": "Ultra-fast task routing and lightweight intent checks",
+            },
+            "chat": {
+                "provider": ProviderType.OLLAMA,
+                "model": "qwen3.5:latest",
+                "purpose": "Default local chat and broad assistant work",
+            },
+            "balanced": {
+                "provider": ProviderType.JAN,
+                "model": "Qwen3_5-4B_Q4_K_M",
+                "purpose": "Balanced fallback for smaller local tasks",
+            },
+            "vision": {
+                "provider": ProviderType.JAN,
+                "model": "Qwen2_5-VL-7B-Instruct-IQ4_XS",
+                "purpose": "Image and vision-heavy work",
+            },
+            "reasoning": {
+                "provider": ProviderType.LM_STUDIO,
+                "model": "qwen3.5-9b-claude-4.6-opus-reasoning-distilled",
+                "purpose": "Longer reasoning chains and harder planning",
+            },
+            "coding": {
+                "provider": ProviderType.LM_STUDIO,
+                "model": "omnicoder-9b",
+                "purpose": "Local coding and implementation tasks",
+            },
+        },
+    },
+    "gemma_qwen_hybrid": {
+        "label": "Gemma + Qwen Hybrid",
+        "description": "Use Gemma for reasoning and summaries, Qwen for coding, chat, and vision.",
+        "active_provider": ProviderType.OLLAMA,
+        "active_model": "qwen3.5:latest",
+        "fallback_order": (ProviderType.LM_STUDIO, ProviderType.JAN),
+        "local_priority": ["ollama", "lm_studio", "jan"],
+        "profiles": {
+            ProviderType.OLLAMA: {
+                "base_url": "http://localhost:11434/v1",
+                "model": "qwen3.5:latest",
+            },
+            ProviderType.LM_STUDIO: {
+                "base_url": "http://localhost:1234/v1",
+                "model": "gemma-4-e2b-it",
+            },
+            ProviderType.JAN: {
+                "base_url": "http://localhost:1337/v1",
+                "model": "models/gemma-4-26b-a4b-it",
+            },
+        },
+        "roles": {
+            "router": {
+                "provider": ProviderType.OLLAMA,
+                "model": "sorc/qwen3.5-claude-4.6-opus:0.8b",
+                "purpose": "Tiny fast router for quick intent and lightweight triage",
+            },
+            "chat": {
+                "provider": ProviderType.OLLAMA,
+                "model": "qwen3.5:latest",
+                "purpose": "Fast everyday local chat and assistant work",
+            },
+            "coding": {
+                "provider": ProviderType.LM_STUDIO,
+                "model": "omnicoder-9b",
+                "purpose": "Primary local coding model for implementation and edits",
+            },
+            "reasoning": {
+                "provider": ProviderType.LM_STUDIO,
+                "model": "gemma-4-e2b-it",
+                "purpose": "Deep reasoning, planning, and longer context tasks",
+            },
+            "long_context": {
+                "provider": ProviderType.LM_STUDIO,
+                "model": "gemma-4-e2b-it",
+                "purpose": "Large document reads, summarization, and durable context work",
+            },
+            "vision": {
+                "provider": ProviderType.JAN,
+                "model": "Qwen2_5-VL-7B-Instruct-IQ4_XS",
+                "purpose": "Images, screenshots, and visual workflows",
+            },
+            "summarization": {
+                "provider": ProviderType.JAN,
+                "model": "models/gemma-3n-e4b-it",
+                "purpose": "Compact summaries and clean instruction-following outputs",
+            },
+            "balanced": {
+                "provider": ProviderType.JAN,
+                "model": "models/gemma-4-26b-a4b-it",
+                "purpose": "Strong Jan fallback when LM Studio is busy or unavailable",
+            },
+        },
+    },
+}
+
+
+def build_routing_summary(preset_key: str) -> str:
+    preset = LOCAL_MODEL_ROUTING_PRESETS.get(preset_key, LOCAL_MODEL_ROUTING_PRESETS["qwen_local"])
+    lines = [f"{preset['label']} routing preset", "", preset["description"], ""]
+    for role, route in preset["roles"].items():
+        provider_name = provider_display_name(route["provider"]) if HAS_SRC_MODULES else route["provider"].value
+        lines.append(f"{role.replace('_', ' ').title()}: {provider_name} -> {route['model']}")
+        lines.append(f"  {route['purpose']}")
+    lines.append("")
+    runtime_order = " -> ".join(provider_display_name(provider) for provider in (preset["active_provider"], *preset["fallback_order"]))
+    lines.append(f"Primary runtime order: {runtime_order}")
+    lines.append(f"Primary active model: {preset['active_model']}")
+    lines.append("Saved provider profiles set only the active per-runtime defaults. The exported routing file keeps the full per-role map.")
+    return "\n".join(lines)
+
+
+def export_routing_config_artifact(preset_key: str) -> Path:
+    preset = LOCAL_MODEL_ROUTING_PRESETS.get(preset_key, LOCAL_MODEL_ROUTING_PRESETS["qwen_local"])
+    export_payload = {
+        "name": preset["label"],
+        "description": preset["description"],
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "active_provider": preset["active_provider"].value,
+        "active_model": preset["active_model"],
+        "fallback_order": [provider.value for provider in preset["fallback_order"]],
+        "local_priority": list(preset["local_priority"]),
+        "provider_profiles": {
+            provider.value: dict(profile)
+            for provider, profile in preset["profiles"].items()
+        },
+        "roles": {
+            role: {
+                "provider": route["provider"].value,
+                "model": route["model"],
+                "purpose": route["purpose"],
+            }
+            for role, route in preset["roles"].items()
+        },
+    }
+    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+    slug = preset["label"].lower().replace(" ", "-").replace("+", "plus")
+    target = ARTIFACTS_DIR / f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{slug}-routing.json"
+    target.write_text(json.dumps(export_payload, indent=2), encoding="utf-8")
+    return target
+
+
+def apply_local_model_routing_preset(preset_key: str) -> tuple[bool, str, Path | None]:
+    if not HAS_SRC_MODULES:
+        return False, "Provider config module is not available", None
+
+    preset = LOCAL_MODEL_ROUTING_PRESETS.get(preset_key, LOCAL_MODEL_ROUTING_PRESETS["qwen_local"])
+    enabled_local = (ProviderType.OLLAMA, ProviderType.LM_STUDIO, ProviderType.JAN)
+    for provider_type, profile in preset["profiles"].items():
+        save_provider_profile(provider_type, profile["base_url"], profile["model"])
+
+    active_profile = preset["profiles"][preset["active_provider"]]
+    save_provider_settings(
+        preset["active_provider"],
+        active_profile["base_url"],
+        preset["active_model"],
+        "",
+        fallback_order=preset["fallback_order"],
+        enabled_providers=enabled_local,
+    )
+    save_local_ai_priority(list(preset["local_priority"]))
+    target = export_routing_config_artifact(preset_key)
+    return True, f"Applied {preset['label']} routing preset and exported {target.name}", target
 
 
 def _iter_workspace_files(root: Path, max_depth: int = 3):
@@ -1483,6 +1691,8 @@ def create_chat_screen(page: ft.Page):
 def create_mission_control_screen(page: ft.Page, send_chat_message=None):
     state = load_desktop_state()
     claw_profiles = get_claw_profiles()
+    selected_routing_preset = {"value": "gemma_qwen_hybrid"}
+    routing_summary = ft.Text(build_routing_summary(selected_routing_preset["value"]), size=12, color=TEXT_PRIMARY, selectable=True)
     mission_status = ft.Text("Mission control ready", size=12, color=TEXT_MUTED)
     quick_prompt = ft.TextField(
         hint_text="Send a task to chat while you stay in mission control...",
@@ -1619,6 +1829,75 @@ def create_mission_control_screen(page: ft.Page, send_chat_message=None):
             mission_status.value = "Voice narration is not available"
             mission_status.color = WARNING
         page.update()
+
+    router_cards_view = ft.ListView(spacing=10, expand=True)
+
+    def refresh_router_cards():
+        preset = LOCAL_MODEL_ROUTING_PRESETS[selected_routing_preset["value"]]
+        routing_summary.value = build_routing_summary(selected_routing_preset["value"])
+        router_cards_view.controls.clear()
+        for role, route in preset["roles"].items():
+            router_cards_view.controls.append(
+                ft.Container(
+                    bgcolor=CARD_BG,
+                    border=ft.Border.all(1, BORDER_COLOR),
+                    border_radius=18,
+                    padding=ft.Padding(12, 10, 12, 10),
+                    content=ft.Column(
+                        [
+                            ft.Row(
+                                [
+                                    ft.Text(role.replace("_", " ").title(), size=14, weight=ft.FontWeight.W_700, color=TEXT_PRIMARY),
+                                    ft.Text(provider_display_name(route["provider"]), size=11, color=ACCENT),
+                                ],
+                                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                            ),
+                            ft.Text(route["model"], size=12, color=TEXT_PRIMARY, selectable=True),
+                            ft.Text(route["purpose"], size=12, color=TEXT_MUTED),
+                        ],
+                        spacing=6,
+                    ),
+                )
+            )
+
+    def on_routing_preset_change(e=None):
+        selected_routing_preset["value"] = routing_preset_dropdown.value or "gemma_qwen_hybrid"
+        refresh_router_cards()
+        mission_status.value = f"Loaded {LOCAL_MODEL_ROUTING_PRESETS[selected_routing_preset['value']]['label']} preset"
+        mission_status.color = TEXT_MUTED
+        page.update()
+
+    def apply_selected_routing(e=None):
+        ok, message, _ = apply_local_model_routing_preset(selected_routing_preset["value"])
+        mission_status.value = message
+        mission_status.color = SUCCESS if ok else WARNING
+        if ok:
+            refresh_router_cards()
+            log_activity(f"Applied {LOCAL_MODEL_ROUTING_PRESETS[selected_routing_preset['value']]['label']} preset")
+        page.update()
+
+    def export_selected_routing(e=None):
+        target = export_routing_config_artifact(selected_routing_preset["value"])
+        mission_status.value = f"Exported routing config to {target.name}"
+        mission_status.color = SUCCESS
+        log_activity(f"Exported routing config {target.name}")
+        page.update()
+
+    def send_routing_to_chat(e=None):
+        if not send_chat_message:
+            mission_status.value = "Chat is not available right now"
+            mission_status.color = WARNING
+            page.update()
+            return
+        prompt = "Use this local routing plan when suggesting workflows or model choices:\n\n" + build_routing_summary(selected_routing_preset["value"])
+        if send_chat_message(prompt):
+            mission_status.value = "Sent local routing plan to chat"
+            mission_status.color = SUCCESS
+            log_activity(f"Shared {LOCAL_MODEL_ROUTING_PRESETS[selected_routing_preset['value']]['label']} plan with chat")
+        else:
+            mission_status.value = "Chat is busy right now"
+            mission_status.color = WARNING
+            page.update()
 
     def open_source(e=None):
         source_value = (file_path_field.value or "").strip().strip('"')
@@ -1830,6 +2109,61 @@ def create_mission_control_screen(page: ft.Page, send_chat_message=None):
         ),
     )
 
+    routing_preset_dropdown = ft.Dropdown(
+        label="Routing preset",
+        value=selected_routing_preset["value"],
+        options=[
+            ft.dropdown.Option(key, preset["label"])
+            for key, preset in LOCAL_MODEL_ROUTING_PRESETS.items()
+        ],
+        border_radius=14,
+        bgcolor=CARD_BG,
+        on_change=on_routing_preset_change,
+    )
+    refresh_router_cards()
+
+    router_tab = ft.Tab(
+        text="Model Router",
+        content=ft.Container(
+            padding=ft.Padding(12, 12, 12, 12),
+            content=ft.Column(
+                [
+                    ft.Text("Apply a real local routing preset across Ollama, LM Studio, and Jan using your installed Qwen and Gemma models.", size=12, color=TEXT_MUTED),
+                    routing_preset_dropdown,
+                    ft.Row(
+                        [
+                            ft.Button("Apply Routing Preset", icon=ft.Icons.HUB, on_click=apply_selected_routing),
+                            ft.OutlinedButton("Export Config", icon=ft.Icons.DOWNLOAD, on_click=export_selected_routing),
+                            ft.OutlinedButton("Send To Chat", icon=ft.Icons.FORWARD_TO_INBOX, on_click=send_routing_to_chat),
+                            ft.OutlinedButton("Narrate", icon=ft.Icons.RECORD_VOICE_OVER, on_click=lambda e: queue_voice_narration(build_routing_summary(selected_routing_preset["value"])) or None),
+                        ],
+                        spacing=8,
+                        wrap=True,
+                    ),
+                    ft.Container(
+                        bgcolor=CARD_BG,
+                        border=ft.Border.all(1, BORDER_COLOR),
+                        border_radius=18,
+                        padding=ft.Padding(12, 10, 12, 10),
+                        content=ft.Column(
+                            [
+                                ft.Text("Routing Summary", size=14, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
+                                routing_summary,
+                            ],
+                            spacing=6,
+                        ),
+                    ),
+                    ft.Container(
+                        expand=True,
+                        content=router_cards_view,
+                    ),
+                ],
+                expand=True,
+                spacing=10,
+            ),
+        ),
+    )
+
     claw_cards = ft.Column(
         [build_claw_card(profile_key, profile) for profile_key, profile in claw_profiles.items()],
         spacing=10,
@@ -1868,7 +2202,7 @@ def create_mission_control_screen(page: ft.Page, send_chat_message=None):
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 ),
                 ft.Divider(height=1),
-                ft.Tabs(expand=1, tabs=[quick_chat_tab, omni_tab, workspaces_tab, claw_tab]),
+                ft.Tabs(expand=1, tabs=[quick_chat_tab, omni_tab, workspaces_tab, router_tab, claw_tab]),
             ],
             expand=True,
             spacing=10,
@@ -4086,6 +4420,708 @@ def create_analysis_screen(page: ft.Page):
     )
 
 
+def create_business_brain_screen(page: ft.Page):
+    if not HAS_SRC_MODULES:
+        return ft.Container(
+            expand=True,
+            bgcolor=CARD_BG,
+            border=ft.Border.all(1, BORDER_COLOR),
+            border_radius=22,
+            padding=ft.Padding(18, 16, 18, 16),
+            content=ft.Text("Business Brain needs the local src modules available.", size=13, color=WARNING),
+        )
+
+    inbox_path = get_business_brain_inbox(PROJECT_ROOT)
+    inbox_path.mkdir(parents=True, exist_ok=True)
+    ensure_business_brain_db(PROJECT_ROOT)
+
+    intake_path_field = ft.TextField(
+        label="Intake path",
+        value=str(inbox_path),
+        hint_text="Folder containing .eml, WhatsApp exports, PDFs, bills, contracts, and notes",
+        border_radius=14,
+        bgcolor=CARD_BG,
+        expand=True,
+    )
+    schema_text = ft.Text(business_brain_schema_overview(), size=12, color=TEXT_PRIMARY, selectable=True)
+    status_text = ft.Text("Business Brain ready", size=12, color=TEXT_MUTED)
+    db_path_text = ft.Text(str(get_business_brain_db_path(PROJECT_ROOT)), size=11, color=TEXT_MUTED, selectable=True)
+    total_text = ft.Text("0", size=24, weight=ft.FontWeight.W_700, color=TEXT_PRIMARY)
+    risk_text = ft.Text("0", size=24, weight=ft.FontWeight.W_700, color=WARNING)
+    renewals_text = ft.Text("0", size=24, weight=ft.FontWeight.W_700, color=ACCENT)
+    money_text = ft.Text("0", size=24, weight=ft.FontWeight.W_700, color=SUCCESS)
+    domains_column = ft.Column(spacing=8)
+    counterparties_column = ft.Column(spacing=8)
+    recent_column = ft.Column(spacing=8)
+    opportunities_text = ft.Text("No opportunities surfaced yet.", size=12, color=TEXT_MUTED, selectable=True)
+
+    def metric_card(title: str, value_control: ft.Control, detail: str, accent_color: str):
+        return ft.Container(
+            expand=True,
+            bgcolor=CARD_BG,
+            border=ft.Border.all(1, BORDER_COLOR),
+            border_radius=18,
+            padding=ft.Padding(14, 12, 14, 12),
+            content=ft.Column(
+                [
+                    ft.Text(title, size=12, color=TEXT_MUTED),
+                    value_control,
+                    ft.Text(detail, size=11, color=accent_color),
+                ],
+                spacing=6,
+            ),
+        )
+
+    def refresh_business_brain(e=None):
+        overview = get_business_brain_overview(PROJECT_ROOT)
+        total_text.value = str(overview["total_documents"])
+        risk_text.value = str(overview["high_risk"])
+        renewals_text.value = str(overview["renewals"])
+        money_text.value = str(overview["money_items"])
+        db_path_text.value = overview["db_path"]
+
+        domains_column.controls.clear()
+        for row in overview["domains"][:8]:
+            domains_column.controls.append(
+                ft.Container(
+                    bgcolor=CARD_BG,
+                    border=ft.Border.all(1, BORDER_COLOR),
+                    border_radius=16,
+                    padding=ft.Padding(12, 10, 12, 10),
+                    content=ft.Row(
+                        [
+                            ft.Text(str(row["domain"]).title(), size=13, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
+                            ft.Text(str(row["count"]), size=12, color=ACCENT),
+                        ],
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    ),
+                )
+            )
+        if not domains_column.controls:
+            domains_column.controls.append(ft.Text("No indexed domains yet.", size=12, color=TEXT_MUTED))
+
+        counterparties_column.controls.clear()
+        for row in overview["counterparties"]:
+            counterparties_column.controls.append(
+                ft.Container(
+                    bgcolor=CARD_BG,
+                    border=ft.Border.all(1, BORDER_COLOR),
+                    border_radius=16,
+                    padding=ft.Padding(12, 10, 12, 10),
+                    content=ft.Row(
+                        [
+                            ft.Text(str(row["counterparty"]), size=12, color=TEXT_PRIMARY, expand=True, selectable=True),
+                            ft.Text(str(row["count"]), size=12, color=ACCENT),
+                        ],
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    ),
+                )
+            )
+        if not counterparties_column.controls:
+            counterparties_column.controls.append(ft.Text("No counterparties clustered yet.", size=12, color=TEXT_MUTED))
+
+        recent_column.controls.clear()
+        for row in overview["recent"]:
+            recent_column.controls.append(
+                ft.Container(
+                    bgcolor=CARD_BG,
+                    border=ft.Border.all(1, BORDER_COLOR),
+                    border_radius=16,
+                    padding=ft.Padding(12, 10, 12, 10),
+                    content=ft.Column(
+                        [
+                            ft.Row(
+                                [
+                                    ft.Text(str(row["source_name"]), size=13, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY, expand=True),
+                                    ft.Text(str(row["risk_level"]).upper(), size=11, color=WARNING if row["risk_level"] != "normal" else TEXT_MUTED),
+                                ],
+                                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                            ),
+                            ft.Text(f"{row['source_kind']} | {row['domain']} | {row.get('counterparty') or 'unknown counterparty'}", size=11, color=TEXT_MUTED, selectable=True),
+                            ft.Text(str(row["summary"]), size=12, color=TEXT_PRIMARY, selectable=True),
+                        ],
+                        spacing=5,
+                    ),
+                )
+            )
+        if not recent_column.controls:
+            recent_column.controls.append(ft.Text("No indexed records yet.", size=12, color=TEXT_MUTED))
+
+        opportunities = overview["opportunities"]
+        opportunities_text.value = "\n".join(f"- {item}" for item in opportunities) if opportunities else "No opportunities surfaced yet."
+        page.update()
+
+    def ingest_now(e=None):
+        result = ingest_business_brain_path(PROJECT_ROOT, intake_path_field.value or "")
+        status_text.value = result["message"]
+        status_text.color = SUCCESS if result.get("ok") else WARNING
+        refresh_business_brain()
+
+    def open_inbox(e=None):
+        target = Path(intake_path_field.value or str(inbox_path)).expanduser()
+        target.mkdir(parents=True, exist_ok=True)
+        opened = launch_local_app(str(target))
+        status_text.value = "Opened intake folder" if opened else f"Intake folder ready at {target}"
+        status_text.color = SUCCESS if opened else TEXT_MUTED
+        page.update()
+
+    def save_snapshot(e=None):
+        overview = get_business_brain_overview(PROJECT_ROOT)
+        ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+        target = ARTIFACTS_DIR / f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-business-brain-snapshot.md"
+        target.write_text(
+            "\n".join(
+                [
+                    "# Business Brain Snapshot",
+                    "",
+                    f"Database: {overview['db_path']}",
+                    f"Total documents: {overview['total_documents']}",
+                    f"High risk items: {overview['high_risk']}",
+                    f"Renewals detected: {overview['renewals']}",
+                    f"Money items: {overview['money_items']}",
+                    "",
+                    "## Domains",
+                    *(f"- {row['domain']}: {row['count']}" for row in overview['domains']),
+                    "",
+                    "## Top Counterparties",
+                    *(f"- {row['counterparty']}: {row['count']}" for row in overview['counterparties']),
+                    "",
+                    "## Opportunities",
+                    *(f"- {item}" for item in overview['opportunities']),
+                ]
+            ),
+            encoding="utf-8",
+        )
+        status_text.value = f"Saved Business Brain snapshot to {target.name}"
+        status_text.color = SUCCESS
+        page.update()
+
+    refresh_business_brain()
+
+    return ft.SelectionArea(
+        content=ft.Column(
+            [
+                ft.Row(
+                    [
+                        ft.Column(
+                            [
+                                ft.Text("Business Brain", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
+                                ft.Text("Local unified index for emails, WhatsApp exports, bills, contracts, PDFs, and operating documents.", size=12, color=TEXT_MUTED),
+                            ],
+                            spacing=4,
+                            expand=True,
+                        ),
+                        ft.Button("Refresh", icon=ft.Icons.REFRESH, on_click=refresh_business_brain),
+                        ft.Button("Scan Intake", icon=ft.Icons.AUTO_AWESOME, on_click=ingest_now),
+                    ],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                ),
+                ft.Divider(height=1),
+                ft.Container(
+                    bgcolor=PANEL_BG,
+                    border=ft.Border.all(1, BORDER_COLOR),
+                    border_radius=20,
+                    padding=ft.Padding(14, 12, 14, 12),
+                    content=ft.Column(
+                        [
+                            ft.Text("Intake", size=14, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
+                            ft.Text("Drop .eml, WhatsApp .txt exports, PDFs, bills, contracts, and notes into a folder, then scan it into the local index.", size=12, color=TEXT_MUTED),
+                            ft.Row([intake_path_field], spacing=8),
+                            ft.Row(
+                                [
+                                    ft.Button("Open Intake Folder", icon=ft.Icons.FOLDER_OPEN, on_click=open_inbox),
+                                    ft.OutlinedButton("Save Snapshot", icon=ft.Icons.NOTE_ADD, on_click=save_snapshot),
+                                ],
+                                spacing=8,
+                                wrap=True,
+                            ),
+                            ft.Text(f"Database path: {db_path_text.value}", size=11, color=TEXT_MUTED, selectable=True),
+                            status_text,
+                        ],
+                        spacing=8,
+                    ),
+                ),
+                ft.Row(
+                    [
+                        metric_card("Indexed documents", total_text, "Everything the agents can reason over", ACCENT),
+                        metric_card("High risk", risk_text, "Legal, expiry, breach, urgent, or penalty signals", WARNING),
+                        metric_card("Renewals", renewals_text, "Detected expiry and renewal style dates", ACCENT),
+                        metric_card("Money items", money_text, "Records carrying amounts or billing signals", SUCCESS),
+                    ],
+                    spacing=10,
+                ),
+                ft.Row(
+                    [
+                        ft.Container(
+                            expand=3,
+                            bgcolor=PANEL_BG,
+                            border=ft.Border.all(1, BORDER_COLOR),
+                            border_radius=20,
+                            padding=ft.Padding(14, 12, 14, 12),
+                            content=ft.Column(
+                                [
+                                    ft.Text("Schema", size=14, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
+                                    schema_text,
+                                ],
+                                spacing=8,
+                            ),
+                        ),
+                        ft.Container(
+                            expand=2,
+                            bgcolor=PANEL_BG,
+                            border=ft.Border.all(1, BORDER_COLOR),
+                            border_radius=20,
+                            padding=ft.Padding(14, 12, 14, 12),
+                            content=ft.Column(
+                                [
+                                    ft.Text("Domains", size=14, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
+                                    ft.ListView([domains_column], expand=True, spacing=0, padding=0),
+                                ],
+                                expand=True,
+                                spacing=8,
+                            ),
+                        ),
+                        ft.Container(
+                            expand=2,
+                            bgcolor=PANEL_BG,
+                            border=ft.Border.all(1, BORDER_COLOR),
+                            border_radius=20,
+                            padding=ft.Padding(14, 12, 14, 12),
+                            content=ft.Column(
+                                [
+                                    ft.Text("Top Counterparties", size=14, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
+                                    ft.ListView([counterparties_column], expand=True, spacing=0, padding=0),
+                                ],
+                                expand=True,
+                                spacing=8,
+                            ),
+                        ),
+                    ],
+                    expand=True,
+                    spacing=10,
+                ),
+                ft.Row(
+                    [
+                        ft.Container(
+                            expand=3,
+                            bgcolor=PANEL_BG,
+                            border=ft.Border.all(1, BORDER_COLOR),
+                            border_radius=20,
+                            padding=ft.Padding(14, 12, 14, 12),
+                            content=ft.Column(
+                                [
+                                    ft.Text("Recent Indexed Records", size=14, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
+                                    ft.ListView([recent_column], expand=True, spacing=0, padding=0),
+                                ],
+                                expand=True,
+                                spacing=8,
+                            ),
+                        ),
+                        ft.Container(
+                            expand=2,
+                            bgcolor=PANEL_BG,
+                            border=ft.Border.all(1, BORDER_COLOR),
+                            border_radius=20,
+                            padding=ft.Padding(14, 12, 14, 12),
+                            content=ft.Column(
+                                [
+                                    ft.Text("Expert Mix Opportunities", size=14, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
+                                    ft.Text("These are the first cross-domain prompts the legal, accounting, business, property, and content agents can act on.", size=12, color=TEXT_MUTED),
+                                    opportunities_text,
+                                ],
+                                spacing=8,
+                            ),
+                        ),
+                    ],
+                    expand=True,
+                    spacing=10,
+                ),
+            ],
+            expand=True,
+            spacing=10,
+        )
+    )
+
+
+def create_reasoning_sandbox_screen(page: ft.Page, send_chat_message=None):
+    if not HAS_SRC_MODULES:
+        return ft.Container(
+            expand=True,
+            bgcolor=CARD_BG,
+            border=ft.Border.all(1, BORDER_COLOR),
+            border_radius=22,
+            padding=ft.Padding(18, 16, 18, 16),
+            content=ft.Text("Reasoning Sandbox needs the local src modules available.", size=13, color=WARNING),
+        )
+
+    tasks_dir = ensure_reasoning_sample_tasks(PROJECT_ROOT)
+    task_path_field = ft.TextField(
+        label="Task file path",
+        hint_text="ARC-style .json task or a plain text reasoning prompt file",
+        border_radius=14,
+        bgcolor=CARD_BG,
+        expand=True,
+    )
+    sample_task_dropdown = ft.Dropdown(label="Sample task", width=320, bgcolor=CARD_BG, border_radius=14)
+    model_lane_dropdown = ft.Dropdown(
+        label="Model lane",
+        width=240,
+        value="Gemma-4",
+        options=[
+            ft.dropdown.Option("Gemma-4"),
+            ft.dropdown.Option("Qwen 3.5"),
+            ft.dropdown.Option("Vision lane"),
+            ft.dropdown.Option("OmniCoder"),
+            ft.dropdown.Option("Manual"),
+        ],
+        bgcolor=CARD_BG,
+        border_radius=14,
+    )
+    pasted_task_field = ft.TextField(
+        label="Pasted task",
+        hint_text="Paste an ARC prompt, logic puzzle, or reasoning notes here",
+        multiline=True,
+        min_lines=10,
+        max_lines=18,
+        expand=True,
+        border_radius=16,
+        bgcolor=CARD_BG,
+    )
+    task_summary = ft.Text("Load a task to begin.", size=12, color=TEXT_MUTED, selectable=True)
+    task_preview = ft.Text("Task preview will appear here.", size=12, color=TEXT_MUTED, selectable=True)
+    chain_output = ft.Text("Five-step reasoning chain will appear here.", size=12, color=TEXT_MUTED, selectable=True)
+    evaluator_output = ft.Text("Model evaluator pack will appear here.", size=12, color=TEXT_MUTED, selectable=True)
+    answer_input = ft.TextField(
+        label="Model answer grid",
+        hint_text="Paste rows like '2 2 2' or JSON like [[2,2],[2,2]]",
+        multiline=True,
+        min_lines=6,
+        max_lines=12,
+        expand=True,
+        border_radius=16,
+        bgcolor=CARD_BG,
+    )
+    score_output = ft.Text("No score yet.", size=12, color=TEXT_MUTED, selectable=True)
+    scoreboard_output = ft.Text("No model scores recorded yet.", size=12, color=TEXT_MUTED, selectable=True)
+    attempts_output = ft.Text("No attempt history recorded yet.", size=12, color=TEXT_MUTED, selectable=True)
+    status_text = ft.Text("Reasoning sandbox ready", size=12, color=TEXT_MUTED)
+    current_task = {"value": None}
+    score_history: list[dict[str, object]] = []
+    sandbox_sources: list[dict[str, str]] = []
+    source_dropdown = ft.Dropdown(label="Recent source", width=420, bgcolor=CARD_BG, border_radius=14)
+
+    def refresh_sample_tasks():
+        sample_task_dropdown.options = [ft.dropdown.Option("", "Select bundled task")]
+        sample_task_dropdown.options.extend(
+            ft.dropdown.Option(item["path"], item["label"]) for item in list_reasoning_tasks(PROJECT_ROOT)
+        )
+        if sample_task_dropdown.value is None:
+            sample_task_dropdown.value = ""
+
+    def refresh_scoreboard():
+        if not score_history:
+            scoreboard_output.value = "No model scores recorded yet."
+            attempts_output.value = "No attempt history recorded yet."
+            return
+        grouped: dict[str, list[dict[str, object]]] = {}
+        for item in score_history:
+            grouped.setdefault(str(item.get("model", "unknown")), []).append(item)
+
+        scoreboard_lines = ["Scoreboard"]
+        attempt_lines = ["Attempt History"]
+        for model_name, attempts in sorted(
+            grouped.items(),
+            key=lambda pair: max(float(item.get("score", 0.0)) for item in pair[1]),
+            reverse=True,
+        ):
+            best_score = max(float(item.get("score", 0.0)) for item in attempts)
+            latest = attempts[-1]
+            scoreboard_lines.append(
+                f"- {model_name}: best {best_score:.2f} | latest {float(latest.get('score', 0.0)):.2f} | attempts {len(attempts)}"
+            )
+            for index, item in enumerate(attempts, start=1):
+                attempt_lines.append(
+                    f"- {model_name} attempt {index}: {float(item.get('score', 0.0)):.2f} | {item.get('message', '')}"
+                )
+
+        scoreboard_output.value = "\n".join(scoreboard_lines)
+        attempts_output.value = "\n".join(attempt_lines)
+
+    def refresh_sources(e=None):
+        nonlocal sandbox_sources
+        sandbox_sources = gather_preview_sources(limit=24)
+        source_dropdown.options = [ft.dropdown.Option("", "Select recent source")]
+        source_dropdown.options.extend(
+            ft.dropdown.Option(source["path"], source["label"]) for source in sandbox_sources
+        )
+        if source_dropdown.value is None:
+            source_dropdown.value = ""
+        page.update()
+
+    def load_selected_source(e=None):
+        if not source_dropdown.value:
+            return
+        task_path_field.value = source_dropdown.value
+        load_task_from_path()
+
+    def load_sample_task(e=None):
+        if not sample_task_dropdown.value:
+            return
+        task_path_field.value = sample_task_dropdown.value
+        load_task_from_path()
+
+    def load_task_from_path(e=None):
+        raw_path = (task_path_field.value or "").strip().strip('"')
+        if not raw_path:
+            status_text.value = "Enter a task path first"
+            status_text.color = WARNING
+            page.update()
+            return
+        task = load_reasoning_task(raw_path)
+        if not task.get("ok"):
+            status_text.value = str(task.get("message", "Could not load reasoning task"))
+            status_text.color = WARNING
+            page.update()
+            return
+        current_task["value"] = task
+        score_history.clear()
+        task_summary.value = str(task.get("summary") or "")
+        task_preview.value = str(task.get("preview") or "")
+        chain_output.value = build_reasoning_chain(task)
+        evaluator_output.value = build_model_evaluator(task)
+        answer_input.value = ""
+        score_output.value = "No score yet."
+        refresh_scoreboard()
+        status_text.value = f"Loaded reasoning task {task.get('title', 'task')}"
+        status_text.color = SUCCESS
+        page.update()
+
+    def build_from_pasted_task(e=None):
+        text = (pasted_task_field.value or "").strip()
+        if not text:
+            status_text.value = "Paste a task first"
+            status_text.color = WARNING
+            page.update()
+            return
+        task = {
+            "ok": True,
+            "task_type": "pasted_reasoning",
+            "title": "Pasted reasoning task",
+            "summary": f"Pasted reasoning task\nCharacters: {len(text)}",
+            "preview": text[:5000],
+            "raw_text": text[:12000],
+            "train": [],
+            "test": [],
+        }
+        current_task["value"] = task
+        score_history.clear()
+        task_summary.value = str(task["summary"])
+        task_preview.value = str(task["preview"])
+        chain_output.value = build_reasoning_chain(task)
+        evaluator_output.value = build_model_evaluator(task)
+        answer_input.value = ""
+        score_output.value = "No score yet."
+        refresh_scoreboard()
+        status_text.value = "Built reasoning pack from pasted task"
+        status_text.color = SUCCESS
+        page.update()
+
+    def score_current_answer(e=None):
+        task = current_task["value"]
+        if not task:
+            status_text.value = "Load or paste a reasoning task first"
+            status_text.color = WARNING
+            page.update()
+            return
+        result = score_reasoning_answer(task, answer_input.value or "", model_lane_dropdown.value or "Manual")
+        score_output.value = "\n".join(
+            [
+                f"Model: {result.get('model', 'unknown')}",
+                f"Result: {result.get('message', '')}",
+                f"Score: {float(result.get('score', 0.0)):.2f}",
+            ]
+        )
+        score_history.append(result)
+        refresh_scoreboard()
+        status_text.value = f"Scored answer for {result.get('model', 'unknown')}"
+        status_text.color = SUCCESS if result.get("ok") else WARNING
+        page.update()
+
+    def send_to_chat(e=None):
+        task = current_task["value"]
+        if not task:
+            status_text.value = "Load or paste a reasoning task first"
+            status_text.color = WARNING
+            page.update()
+            return
+        if not send_chat_message:
+            status_text.value = "Chat is not available right now"
+            status_text.color = WARNING
+            page.update()
+            return
+        prompt = build_reasoning_sandbox_report(task)
+        if send_chat_message(prompt):
+            status_text.value = "Sent reasoning task pack to chat"
+            status_text.color = SUCCESS
+        else:
+            status_text.value = "Chat is busy right now"
+            status_text.color = WARNING
+        page.update()
+
+    def save_reasoning_artifact(e=None):
+        task = current_task["value"]
+        if not task:
+            status_text.value = "Load or paste a reasoning task first"
+            status_text.color = WARNING
+            page.update()
+            return
+        ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+        slug = "".join(ch.lower() if ch.isalnum() else "-" for ch in str(task.get("title") or "reasoning-task")).strip("-") or "reasoning-task"
+        target = ARTIFACTS_DIR / f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{slug}-reasoning.md"
+        target.write_text(
+            build_reasoning_sandbox_report(task) + "\n\n## Latest Score\n" + score_output.value + "\n\n## Scoreboard\n" + scoreboard_output.value,
+            encoding="utf-8",
+        )
+        status_text.value = f"Saved reasoning artifact to {target.name}"
+        status_text.color = SUCCESS
+        page.update()
+
+    refresh_sources()
+    refresh_sample_tasks()
+    source_dropdown.on_change = load_selected_source
+    sample_task_dropdown.on_change = load_sample_task
+
+    return ft.SelectionArea(
+        content=ft.Row(
+            [
+                ft.Container(
+                    expand=5,
+                    bgcolor=CARD_BG,
+                    border=ft.Border.all(1, BORDER_COLOR),
+                    border_radius=22,
+                    padding=ft.Padding(18, 16, 18, 16),
+                    content=ft.Column(
+                        [
+                            ft.Row(
+                                [
+                                    ft.Column(
+                                        [
+                                            ft.Text("Reasoning Sandbox", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
+                                            ft.Text("Safe ARC-style task loader, five-step chain builder, and local model evaluator pack.", size=12, color=TEXT_MUTED),
+                                        ],
+                                        spacing=4,
+                                        expand=True,
+                                    ),
+                                    ft.Button("Refresh Sources", icon=ft.Icons.REFRESH, on_click=refresh_sources),
+                                ],
+                                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                            ),
+                            ft.Divider(height=1),
+                            ft.Row([task_path_field, ft.Button("Load Task", icon=ft.Icons.UPLOAD_FILE, on_click=load_task_from_path)], spacing=10, wrap=True),
+                            ft.Row([sample_task_dropdown, source_dropdown], spacing=10, wrap=True),
+                            pasted_task_field,
+                            ft.Row([model_lane_dropdown], spacing=10),
+                            answer_input,
+                            ft.Row(
+                                [
+                                    ft.Button("Build From Pasted Task", icon=ft.Icons.AUTO_AWESOME, on_click=build_from_pasted_task),
+                                    ft.Button("Score Answer", icon=ft.Icons.SCIENCE, on_click=score_current_answer),
+                                    ft.Button("Send To Chat", icon=ft.Icons.FORWARD_TO_INBOX, on_click=send_to_chat),
+                                    ft.Button("Save Reasoning Pack", icon=ft.Icons.NOTE_ADD, on_click=save_reasoning_artifact),
+                                ],
+                                spacing=8,
+                                wrap=True,
+                            ),
+                            status_text,
+                        ],
+                        expand=True,
+                        spacing=12,
+                    ),
+                ),
+                ft.Container(
+                    expand=4,
+                    bgcolor=PANEL_BG,
+                    border=ft.Border.all(1, BORDER_COLOR),
+                    border_radius=22,
+                    padding=ft.Padding(18, 16, 18, 16),
+                    content=ft.Column(
+                        [
+                            ft.Text("Reasoning Output", size=18, weight=ft.FontWeight.BOLD, color=TEXT_PRIMARY),
+                            ft.Text("Task Summary", size=14, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
+                            ft.Container(
+                                expand=1,
+                                bgcolor=CARD_BG,
+                                border=ft.Border.all(1, BORDER_COLOR),
+                                border_radius=18,
+                                padding=ft.Padding(14, 12, 14, 12),
+                                content=ft.ListView([task_summary], expand=True, spacing=0, padding=0),
+                            ),
+                            ft.Text("Task Preview", size=14, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
+                            ft.Container(
+                                expand=2,
+                                bgcolor=CARD_BG,
+                                border=ft.Border.all(1, BORDER_COLOR),
+                                border_radius=18,
+                                padding=ft.Padding(14, 12, 14, 12),
+                                content=ft.ListView([task_preview], expand=True, spacing=0, padding=0),
+                            ),
+                            ft.Text("Five-Step Chain", size=14, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
+                            ft.Container(
+                                expand=2,
+                                bgcolor=CARD_BG,
+                                border=ft.Border.all(1, BORDER_COLOR),
+                                border_radius=18,
+                                padding=ft.Padding(14, 12, 14, 12),
+                                content=ft.ListView([chain_output], expand=True, spacing=0, padding=0),
+                            ),
+                            ft.Text("Model Evaluator", size=14, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
+                            ft.Container(
+                                expand=2,
+                                bgcolor=CARD_BG,
+                                border=ft.Border.all(1, BORDER_COLOR),
+                                border_radius=18,
+                                padding=ft.Padding(14, 12, 14, 12),
+                                content=ft.ListView([evaluator_output], expand=True, spacing=0, padding=0),
+                            ),
+                            ft.Text("Score Result", size=14, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
+                            ft.Container(
+                                expand=1,
+                                bgcolor=CARD_BG,
+                                border=ft.Border.all(1, BORDER_COLOR),
+                                border_radius=18,
+                                padding=ft.Padding(14, 12, 14, 12),
+                                content=ft.ListView([score_output], expand=True, spacing=0, padding=0),
+                            ),
+                            ft.Text("Scoreboard", size=14, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
+                            ft.Container(
+                                expand=1,
+                                bgcolor=CARD_BG,
+                                border=ft.Border.all(1, BORDER_COLOR),
+                                border_radius=18,
+                                padding=ft.Padding(14, 12, 14, 12),
+                                content=ft.ListView([scoreboard_output], expand=True, spacing=0, padding=0),
+                            ),
+                            ft.Text("Attempt History", size=14, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
+                            ft.Container(
+                                expand=1,
+                                bgcolor=CARD_BG,
+                                border=ft.Border.all(1, BORDER_COLOR),
+                                border_radius=18,
+                                padding=ft.Padding(14, 12, 14, 12),
+                                content=ft.ListView([attempts_output], expand=True, spacing=0, padding=0),
+                            ),
+                        ],
+                        expand=True,
+                        spacing=10,
+                    ),
+                ),
+            ],
+            expand=True,
+            spacing=14,
+        )
+    )
+
+
 def create_free_apis_screen(page: ft.Page, on_provider_state_change=None):
     enabled_cloud_providers = tuple(get_enabled_provider_types()) if HAS_SRC_MODULES else tuple()
     cloud_provider_options = [
@@ -4279,6 +5315,8 @@ def main(page: ft.Page):
     chat_screen, send_text_fn, reset_chat_fn, chat_status = create_chat_screen(page)
     mission_control_screen = create_mission_control_screen(page, send_text_fn)
     analysis_screen = create_analysis_screen(page)
+    reasoning_sandbox_screen = create_reasoning_sandbox_screen(page, send_text_fn)
+    business_brain_screen = create_business_brain_screen(page)
     voice_screen = create_voice_screen(page)
     commands_screen = create_commands_screen(page)
     tools_screen = create_tools_screen(page)
@@ -4307,6 +5345,8 @@ def main(page: ft.Page):
         (ft.Icons.CHAT_BUBBLE_OUTLINE_ROUNDED, "Chat", "Conversation workspace"),
         (ft.Icons.DASHBOARD_CUSTOMIZE_OUTLINED, "Mission Control", "Multimodal and live task workspace"),
         (ft.Icons.PAGEVIEW_ROUNDED, "Analysis", "Expanded task and preview workspace"),
+        (ft.Icons.PSYCHOLOGY_OUTLINED, "Reasoning Sandbox", "ARC-style task and evaluator workspace"),
+        (ft.Icons.ACCOUNT_TREE_OUTLINED, "Business Brain", "Unified local index for expert agents"),
         (ft.Icons.TUNE_ROUNDED, "Customize", "Desktop preferences"),
         (ft.Icons.RECORD_VOICE_OVER_OUTLINED, "Voice", "Speech output"),
         (ft.Icons.PSYCHOLOGY_ALT_OUTLINED, "Memory", "Workspace notes and sessions"),
@@ -4326,6 +5366,8 @@ def main(page: ft.Page):
         chat_screen,
         mission_control_screen,
         analysis_screen,
+        reasoning_sandbox_screen,
+        business_brain_screen,
         customize_screen,
         voice_screen,
         memory_screen,
