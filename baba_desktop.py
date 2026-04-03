@@ -6,6 +6,9 @@ import sys
 import subprocess
 import shutil
 import asyncio
+import mimetypes
+import time
+import wave
 import httpx
 from pathlib import Path
 from datetime import datetime
@@ -194,6 +197,13 @@ try:
 except ImportError:
     HAS_PSUTIL = False
 
+try:
+    from PIL import Image
+
+    HAS_PIL = True
+except ImportError:
+    HAS_PIL = False
+
 LOCAL_AI_PROVIDERS = {
     "jan": {
         "name": "Jan AI",
@@ -341,12 +351,48 @@ LOCAL_APP_CANDIDATES = {
 
 DESKTOP_STATE_FILE = PROJECT_ROOT / ".baba_desktop_state.json"
 ARTIFACTS_DIR = PROJECT_ROOT / ".baba_artifacts"
+DEFAULT_CLAW_PROFILES = {
+    "openclaw": {
+        "label": "OpenClaw",
+        "status_note": "Best first slot for an open and local-first claw runtime.",
+        "install_command": "",
+        "launch_command": "openclaw",
+        "setup_url": "",
+        "notes": "Add a verified repo URL or install command before using this slot.",
+    },
+    "autoclaw": {
+        "label": "AutoClaw",
+        "status_note": "Use this slot for automation-heavy claw agents after review.",
+        "install_command": "",
+        "launch_command": "autoclaw",
+        "setup_url": "",
+        "notes": "Keep automation scoped to local-safe tasks and review install steps first.",
+    },
+    "nemoclaw": {
+        "label": "NemoClaw",
+        "status_note": "Good slot for research or multi-agent experiments.",
+        "install_command": "",
+        "launch_command": "nemoclaw",
+        "setup_url": "",
+        "notes": "Pair this with strong model routing if you want research plus coding.",
+    },
+    "coclaw": {
+        "label": "CoClaw",
+        "status_note": "Use this slot for collaboration-oriented claw tools.",
+        "install_command": "",
+        "launch_command": "coclaw",
+        "setup_url": "",
+        "notes": "Fill in the exact install and launch details for the version you trust.",
+    },
+}
 DEFAULT_DESKTOP_STATE = {
     "workspace_label": PROJECT_ROOT.parent.name if PROJECT_ROOT.parent.name else "Workspace",
     "instruction_profile": "Balanced",
     "response_tone": "Direct",
     "theme_name": "Warm Sand",
     "local_ai_priority": ["jan", "ollama", "lm_studio"],
+    "live_voice_updates": True,
+    "claw_profiles": DEFAULT_CLAW_PROFILES,
     "memory_notes": "",
     "piper_model_path": "",
     "whisper_model": "base",
@@ -415,6 +461,162 @@ def save_local_ai_priority(priority: list[str]) -> list[str]:
     updated_state["local_ai_priority"] = normalize_local_ai_priority(priority)
     save_desktop_state(updated_state)
     return list(updated_state["local_ai_priority"])
+
+
+VOICE_NARRATOR_STATE = {"busy": False, "queue": []}
+VOICE_NARRATOR_LOCK = threading.Lock()
+
+
+def queue_voice_narration(text: str, voice_name: str | None = None) -> bool:
+    if not HAS_EDGE_TTS:
+        return False
+    cleaned = " ".join((text or "").split()).strip()
+    if not cleaned:
+        return False
+    cleaned = cleaned[:500]
+    with VOICE_NARRATOR_LOCK:
+        VOICE_NARRATOR_STATE["queue"].append((cleaned, voice_name or TTS_VOICES[0]))
+        if VOICE_NARRATOR_STATE["busy"]:
+            return True
+        VOICE_NARRATOR_STATE["busy"] = True
+
+    def worker():
+        while True:
+            with VOICE_NARRATOR_LOCK:
+                if not VOICE_NARRATOR_STATE["queue"]:
+                    VOICE_NARRATOR_STATE["busy"] = False
+                    return
+                current_text, current_voice = VOICE_NARRATOR_STATE["queue"].pop(0)
+            try:
+                output_path = PROJECT_ROOT / f"voice_output_{int(time.time() * 1000)}.mp3"
+                comm = edge_tts.Communicate(current_text, current_voice)
+                comm.save_sync(str(output_path))
+                if os.name == "nt":
+                    os.startfile(str(output_path))
+            except Exception:
+                continue
+
+    threading.Thread(target=worker, daemon=True).start()
+    return True
+
+
+def get_claw_profiles() -> dict[str, dict[str, str]]:
+    state = load_desktop_state()
+    raw_profiles = state.get("claw_profiles", {})
+    profiles = json.loads(json.dumps(DEFAULT_CLAW_PROFILES))
+    if isinstance(raw_profiles, dict):
+        for key, value in raw_profiles.items():
+            if key not in profiles or not isinstance(value, dict):
+                continue
+            profiles[key].update({inner_key: str(inner_value) for inner_key, inner_value in value.items() if inner_key in profiles[key]})
+    return profiles
+
+
+def save_claw_profiles(profiles: dict[str, dict[str, str]]) -> None:
+    updated_state = load_desktop_state()
+    updated_state["claw_profiles"] = profiles
+    save_desktop_state(updated_state)
+
+
+TEXT_SOURCE_EXTENSIONS = {".md", ".txt", ".json", ".yaml", ".yml", ".py", ".ts", ".tsx", ".js", ".jsx", ".html", ".css", ".toml", ".csv"}
+IMAGE_SOURCE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+AUDIO_SOURCE_EXTENSIONS = {".wav", ".mp3", ".m4a", ".flac", ".ogg"}
+VIDEO_SOURCE_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm"}
+
+
+def analyze_input_source(source_path: str) -> dict[str, object]:
+    path = Path(source_path.strip().strip('"'))
+    if not source_path.strip():
+        return {"ok": False, "summary": "Enter a file path first."}
+    if not path.exists():
+        return {"ok": False, "summary": f"Path not found: {path}"}
+
+    suffix = path.suffix.lower()
+    mime_type, _encoding = mimetypes.guess_type(str(path))
+    kind = "binary"
+    if suffix in IMAGE_SOURCE_EXTENSIONS:
+        kind = "image"
+    elif suffix in AUDIO_SOURCE_EXTENSIONS:
+        kind = "audio"
+    elif suffix in VIDEO_SOURCE_EXTENSIONS:
+        kind = "video"
+    elif suffix in TEXT_SOURCE_EXTENSIONS:
+        kind = "text"
+    elif mime_type and mime_type.startswith("text/"):
+        kind = "text"
+
+    details = [
+        f"Path: {path}",
+        f"Kind: {kind}",
+        f"Type: {mime_type or 'unknown'}",
+        f"Size: {path.stat().st_size:,} bytes",
+        f"Modified: {datetime.fromtimestamp(path.stat().st_mtime).strftime('%Y-%m-%d %H:%M')}",
+    ]
+    preview = ""
+    multimodel_note = ""
+    suggested_pipeline: list[str] = []
+
+    if kind == "text":
+        preview = read_text_preview(path, max_chars=3000)
+        line_count = len(preview.splitlines()) if preview else 0
+        details.append(f"Preview lines: {line_count}")
+        suggested_pipeline = ["reasoning model", "artifact writer", "voice summary"]
+        multimodel_note = "Single strong reasoning model is usually enough unless the file is paired with media."
+    elif kind == "image":
+        if HAS_PIL:
+            try:
+                with Image.open(path) as image:
+                    details.append(f"Resolution: {image.width} x {image.height}")
+                    details.append(f"Color mode: {image.mode}")
+            except Exception:
+                pass
+        preview = "Image input ready for vision analysis."
+        suggested_pipeline = ["vision model", "reasoning model", "voice summary"]
+        multimodel_note = "Use a vision-capable model or an omni model like Qwen 3.5 Omni for image-heavy tasks."
+    elif kind == "audio":
+        if suffix == ".wav":
+            try:
+                with wave.open(str(path), "rb") as audio_file:
+                    frame_rate = audio_file.getframerate()
+                    frame_count = audio_file.getnframes()
+                    duration_seconds = frame_count / float(frame_rate) if frame_rate else 0
+                    details.append(f"Channels: {audio_file.getnchannels()}")
+                    details.append(f"Sample rate: {frame_rate} Hz")
+                    details.append(f"Duration: {duration_seconds:.1f} seconds")
+            except Exception:
+                pass
+        preview = "Audio input ready. Whisper or an omni model can transcribe and route this into chat."
+        suggested_pipeline = ["speech-to-text", "reasoning model", "voice summary"]
+        multimodel_note = "A two-stage path works best here: transcribe first, then reason over the transcript."
+    elif kind == "video":
+        preview = "Video input detected. A full analysis path usually needs a video or omni model plus reasoning."
+        suggested_pipeline = ["video or omni model", "reasoning model", "artifact writer", "voice summary"]
+        multimodel_note = "For video tasks, use an omni model or extract frames and audio separately for stronger results."
+    else:
+        preview = "Binary input detected. Extract or convert it before deeper reasoning."
+        suggested_pipeline = ["conversion tool", "reasoning model"]
+        multimodel_note = "Convert this source into text, image, audio, or video first for best results."
+
+    details.append("Suggested pipeline: " + " -> ".join(suggested_pipeline))
+    details.append("Model advice: " + multimodel_note)
+    return {
+        "ok": True,
+        "kind": kind,
+        "path": str(path),
+        "preview": preview,
+        "details": details,
+        "summary": "\n".join(details),
+        "pipeline": suggested_pipeline,
+        "model_advice": multimodel_note,
+    }
+
+
+def detect_claw_runtime(profile: dict[str, str]) -> str | None:
+    launch_command = (profile.get("launch_command") or "").strip()
+    if not launch_command:
+        return None
+    executable = launch_command.split()[0].strip('"')
+    return shutil.which(executable)
 
 
 def _iter_workspace_files(root: Path, max_depth: int = 3):
@@ -869,14 +1071,17 @@ def create_chat_screen(page: ft.Page):
     reset_chat()
 
     def send_message(e=None):
-        if (
-            is_streaming["value"]
-            or not input_field.value
-            or not input_field.value.strip()
-        ):
+        if is_streaming["value"] or not input_field.value or not input_field.value.strip():
             return
+        send_direct_message(input_field.value.strip())
+        input_field.value = ""
+        page.update()
+
+    def send_direct_message(message: str):
+        if is_streaming["value"] or not message or not message.strip():
+            return False
         _send_text(
-            input_field.value.strip(),
+            message.strip(),
             chat_list,
             page,
             engine,
@@ -886,8 +1091,7 @@ def create_chat_screen(page: ft.Page):
             current_voice,
             status_bar,
         )
-        input_field.value = ""
-        page.update()
+        return True
 
     def _handle_slash(user_text, cl, pg, eng, cv):
         command = user_text.lower().strip()
@@ -1273,7 +1477,403 @@ def create_chat_screen(page: ft.Page):
         spacing=16,
     )
 
-    return chat_column, send_message, reset_chat, status_msg
+    return chat_column, send_direct_message, reset_chat, status_msg
+
+
+def create_mission_control_screen(page: ft.Page, send_chat_message=None):
+    state = load_desktop_state()
+    claw_profiles = get_claw_profiles()
+    mission_status = ft.Text("Mission control ready", size=12, color=TEXT_MUTED)
+    quick_prompt = ft.TextField(
+        hint_text="Send a task to chat while you stay in mission control...",
+        border_radius=14,
+        expand=True,
+        bgcolor=CARD_BG,
+    )
+    live_voice_checkbox = ft.Checkbox(
+        label="Speak live task updates",
+        value=bool(state.get("live_voice_updates", True)),
+    )
+    activity_list = ft.ListView(expand=True, spacing=8, auto_scroll=True)
+    file_path_field = ft.TextField(
+        label="Input file path",
+        hint_text="Paste a path to text, image, audio, or video input",
+        border_radius=14,
+        expand=True,
+        bgcolor=CARD_BG,
+    )
+    file_summary = ft.Text("No source analyzed yet.", size=12, color=TEXT_MUTED, selectable=True)
+    file_preview = ft.Text("Preview will appear here.", size=12, color=TEXT_MUTED, selectable=True)
+    workspaces = ft.Tabs(expand=1, animation_duration=150)
+    workspace_counter = {"value": 0}
+
+    def persist_live_voice_setting():
+        updated_state = load_desktop_state()
+        updated_state["live_voice_updates"] = bool(live_voice_checkbox.value)
+        save_desktop_state(updated_state)
+
+    def log_activity(message: str):
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        activity_list.controls.append(
+            ft.Container(
+                bgcolor=CARD_BG,
+                border=ft.Border.all(1, BORDER_COLOR),
+                border_radius=16,
+                padding=ft.Padding(12, 10, 12, 10),
+                content=ft.Text(f"[{timestamp}] {message}", size=12, color=TEXT_PRIMARY, selectable=True),
+            )
+        )
+        if len(activity_list.controls) > 24:
+            activity_list.controls.pop(0)
+        if live_voice_checkbox.value:
+            queue_voice_narration(message)
+        page.update()
+
+    def add_workspace_tab(title: str | None = None):
+        workspace_counter["value"] += 1
+        resolved_title = title or f"Workspace {workspace_counter['value']}"
+        scratchpad = ft.TextField(
+            value=f"{resolved_title}\n\nUse this space while Baba keeps working in chat and speaking progress updates.",
+            multiline=True,
+            min_lines=14,
+            max_lines=22,
+            expand=True,
+            border_radius=16,
+            bgcolor=CARD_BG,
+        )
+        workspaces.tabs.append(
+            ft.Tab(
+                text=resolved_title,
+                content=ft.Container(
+                    padding=ft.Padding(10, 10, 10, 10),
+                    content=ft.Column(
+                        [
+                            ft.Text("Scratch workspace", size=14, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
+                            scratchpad,
+                        ],
+                        spacing=8,
+                    ),
+                ),
+            )
+        )
+        workspaces.selected_index = len(workspaces.tabs) - 1
+        log_activity(f"Opened {resolved_title}")
+
+    def send_quick_prompt(e=None):
+        message = (quick_prompt.value or "").strip()
+        if not message:
+            mission_status.value = "Enter a task first"
+            mission_status.color = WARNING
+            page.update()
+            return
+        if send_chat_message and send_chat_message(message):
+            mission_status.value = "Sent prompt to chat"
+            mission_status.color = SUCCESS
+            log_activity(f"Sent prompt to chat: {message[:80]}")
+            quick_prompt.value = ""
+        else:
+            mission_status.value = "Chat is busy right now"
+            mission_status.color = WARNING
+            page.update()
+
+    def analyze_source(e=None):
+        result = analyze_input_source(file_path_field.value or "")
+        if not result.get("ok"):
+            mission_status.value = str(result.get("summary", "Could not analyze source"))
+            mission_status.color = WARNING
+            file_summary.value = mission_status.value
+            file_preview.value = ""
+            page.update()
+            return
+        file_summary.value = str(result.get("summary", ""))
+        file_preview.value = str(result.get("preview", ""))
+        mission_status.value = f"Analyzed {Path(str(result['path'])).name}"
+        mission_status.color = SUCCESS
+        log_activity(f"Analyzed {Path(str(result['path'])).name} as {result.get('kind', 'source')}")
+
+    def send_source_to_chat(e=None):
+        result = analyze_input_source(file_path_field.value or "")
+        if not result.get("ok"):
+            mission_status.value = str(result.get("summary", "Could not analyze source"))
+            mission_status.color = WARNING
+            page.update()
+            return
+        if send_chat_message:
+            prompt = "Analyze this source plan and suggest the best local workflow:\n\n" + str(result.get("summary", ""))
+            prompt += "\n\nPreview:\n" + str(result.get("preview", ""))[:1200]
+            if send_chat_message(prompt):
+                mission_status.value = "Source summary sent to chat"
+                mission_status.color = SUCCESS
+                log_activity(f"Sent multimodal summary for {Path(str(result['path'])).name} to chat")
+            else:
+                mission_status.value = "Chat is busy right now"
+                mission_status.color = WARNING
+                page.update()
+
+    def narrate_source(e=None):
+        summary = file_summary.value if file_summary.value and file_summary.value != "No source analyzed yet." else "Analyze a source first."
+        if queue_voice_narration(summary):
+            mission_status.value = "Narrating current source summary"
+            mission_status.color = SUCCESS
+        else:
+            mission_status.value = "Voice narration is not available"
+            mission_status.color = WARNING
+        page.update()
+
+    def open_source(e=None):
+        source_value = (file_path_field.value or "").strip().strip('"')
+        if not source_value:
+            mission_status.value = "Enter a file path first"
+            mission_status.color = WARNING
+            page.update()
+            return
+        opened = launch_local_app(source_value)
+        mission_status.value = "Opened source" if opened else source_value
+        mission_status.color = SUCCESS if opened else TEXT_MUTED
+        page.update()
+
+    def update_claw_profile(profile_key: str, field_name: str, field_value: str):
+        claw_profiles[profile_key][field_name] = field_value
+        save_claw_profiles(claw_profiles)
+
+    def build_claw_card(profile_key: str, profile: dict[str, str]):
+        install_field = ft.TextField(label="Install command", value=profile.get("install_command", ""), border_radius=12, bgcolor=CARD_BG)
+        launch_field = ft.TextField(label="Launch command", value=profile.get("launch_command", ""), border_radius=12, bgcolor=CARD_BG)
+        url_field = ft.TextField(label="Setup URL", value=profile.get("setup_url", ""), border_radius=12, bgcolor=CARD_BG)
+        notes_field = ft.TextField(label="Notes", value=profile.get("notes", ""), multiline=True, min_lines=2, max_lines=4, border_radius=12, bgcolor=CARD_BG)
+        detected_path = detect_claw_runtime(profile)
+        status_line = ft.Text(
+            f"Detected at {detected_path}" if detected_path else "Not detected yet",
+            size=11,
+            color=SUCCESS if detected_path else TEXT_MUTED,
+            selectable=True,
+        )
+
+        def save_profile(e=None):
+            update_claw_profile(profile_key, "install_command", install_field.value or "")
+            update_claw_profile(profile_key, "launch_command", launch_field.value or "")
+            update_claw_profile(profile_key, "setup_url", url_field.value or "")
+            update_claw_profile(profile_key, "notes", notes_field.value or "")
+            refreshed = detect_claw_runtime(claw_profiles[profile_key])
+            status_line.value = f"Detected at {refreshed}" if refreshed else "Saved profile"
+            status_line.color = SUCCESS if refreshed else TEXT_MUTED
+            log_activity(f"Updated {profile['label']} profile")
+
+        def copy_install(e=None):
+            if install_field.value:
+                page.set_clipboard(install_field.value)
+                mission_status.value = f"Copied install draft for {profile['label']}"
+                mission_status.color = SUCCESS
+                page.update()
+
+        def open_setup(e=None):
+            setup_url = (url_field.value or "").strip()
+            if setup_url:
+                open_external_url(setup_url)
+                log_activity(f"Opened setup URL for {profile['label']}")
+
+        def launch_profile(e=None):
+            runtime_path = detect_claw_runtime(claw_profiles[profile_key])
+            if runtime_path:
+                launch_local_app(runtime_path)
+                log_activity(f"Launched {profile['label']}")
+
+        return ft.Container(
+            bgcolor=CARD_BG,
+            border=ft.Border.all(1, BORDER_COLOR),
+            border_radius=20,
+            padding=ft.Padding(14, 12, 14, 12),
+            content=ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Text(profile["label"], size=15, weight=ft.FontWeight.W_700, color=TEXT_PRIMARY),
+                            ft.Text("Recommended" if profile_key == "openclaw" else "Profile", size=11, color=ACCENT if profile_key == "openclaw" else TEXT_MUTED),
+                        ],
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    ),
+                    ft.Text(profile.get("status_note", ""), size=12, color=TEXT_MUTED),
+                    status_line,
+                    install_field,
+                    launch_field,
+                    url_field,
+                    notes_field,
+                    ft.Row(
+                        [
+                            ft.Button("Save", icon=ft.Icons.SAVE, on_click=save_profile),
+                            ft.OutlinedButton("Copy Install", icon=ft.Icons.CONTENT_COPY, on_click=copy_install),
+                            ft.OutlinedButton("Open URL", icon=ft.Icons.OPEN_IN_NEW, on_click=open_setup),
+                            ft.OutlinedButton("Launch", icon=ft.Icons.PLAY_ARROW, on_click=launch_profile, disabled=not bool(detected_path)),
+                        ],
+                        spacing=8,
+                        wrap=True,
+                    ),
+                ],
+                spacing=8,
+            ),
+        )
+
+    live_voice_checkbox.on_change = lambda e: (persist_live_voice_setting(), log_activity("Updated live voice setting"))
+    add_workspace_tab("Workspace 1")
+    add_workspace_tab("Workspace 2")
+
+    quick_chat_tab = ft.Tab(
+        text="Quick Chat",
+        content=ft.Container(
+            padding=ft.Padding(12, 12, 12, 12),
+            content=ft.Column(
+                [
+                    ft.Text("Keep working here while chat continues in the main conversation pane.", size=12, color=TEXT_MUTED),
+                    ft.Row([quick_prompt, ft.Button("Send", icon=ft.Icons.SEND, on_click=send_quick_prompt)], spacing=8),
+                    mission_status,
+                    ft.Row(
+                        [
+                            ft.Button("Start task", icon=ft.Icons.PLAY_CIRCLE, on_click=lambda e: log_activity("Started a new task cycle")),
+                            ft.Button("Step complete", icon=ft.Icons.CHECK_CIRCLE, on_click=lambda e: log_activity("Completed a task step")),
+                            ft.Button("Safety review", icon=ft.Icons.SECURITY, on_click=lambda e: log_activity("Ran a safety and setup review checkpoint")),
+                        ],
+                        spacing=8,
+                        wrap=True,
+                    ),
+                    ft.Container(
+                        expand=True,
+                        bgcolor=PANEL_BG,
+                        border=ft.Border.all(1, BORDER_COLOR),
+                        border_radius=18,
+                        padding=ft.Padding(12, 12, 12, 12),
+                        content=activity_list,
+                    ),
+                ],
+                expand=True,
+                spacing=10,
+            ),
+        ),
+    )
+
+    omni_tab = ft.Tab(
+        text="Omni Intake",
+        content=ft.Container(
+            padding=ft.Padding(12, 12, 12, 12),
+            content=ft.Column(
+                [
+                    ft.Text("Text, images, audio, and video can be routed here before you send them into chat.", size=12, color=TEXT_MUTED),
+                    ft.Row([file_path_field], spacing=8),
+                    ft.Row(
+                        [
+                            ft.Button("Analyze", icon=ft.Icons.AUTO_AWESOME, on_click=analyze_source),
+                            ft.Button("Open", icon=ft.Icons.OPEN_IN_NEW, on_click=open_source),
+                            ft.Button("Send To Chat", icon=ft.Icons.FORWARD_TO_INBOX, on_click=send_source_to_chat),
+                            ft.OutlinedButton("Narrate", icon=ft.Icons.RECORD_VOICE_OVER, on_click=narrate_source),
+                        ],
+                        spacing=8,
+                        wrap=True,
+                    ),
+                    ft.Container(
+                        bgcolor=CARD_BG,
+                        border=ft.Border.all(1, BORDER_COLOR),
+                        border_radius=18,
+                        padding=ft.Padding(12, 10, 12, 10),
+                        content=ft.Column(
+                            [
+                                ft.Text("Analysis", size=14, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
+                                file_summary,
+                            ],
+                            spacing=6,
+                        ),
+                    ),
+                    ft.Container(
+                        expand=True,
+                        bgcolor=CARD_BG,
+                        border=ft.Border.all(1, BORDER_COLOR),
+                        border_radius=18,
+                        padding=ft.Padding(12, 10, 12, 10),
+                        content=ft.Column(
+                            [
+                                ft.Text("Preview", size=14, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
+                                file_preview,
+                            ],
+                            spacing=6,
+                        ),
+                    ),
+                ],
+                expand=True,
+                spacing=10,
+            ),
+        ),
+    )
+
+    workspaces_tab = ft.Tab(
+        text="Workspaces",
+        content=ft.Container(
+            padding=ft.Padding(12, 12, 12, 12),
+            content=ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Text("Open extra tabs while Baba works so you can keep notes and drafts moving.", size=12, color=TEXT_MUTED, expand=True),
+                            ft.Button("Add Workspace Tab", icon=ft.Icons.ADD_BOX, on_click=lambda e: add_workspace_tab()),
+                        ],
+                        spacing=8,
+                    ),
+                    ft.Container(
+                        expand=True,
+                        bgcolor=PANEL_BG,
+                        border=ft.Border.all(1, BORDER_COLOR),
+                        border_radius=18,
+                        padding=ft.Padding(8, 8, 8, 8),
+                        content=workspaces,
+                    ),
+                ],
+                expand=True,
+                spacing=10,
+            ),
+        ),
+    )
+
+    claw_cards = ft.Column(
+        [build_claw_card(profile_key, profile) for profile_key, profile in claw_profiles.items()],
+        spacing=10,
+        scroll=ft.ScrollMode.AUTO,
+    )
+    claw_tab = ft.Tab(
+        text="Claw Hub",
+        content=ft.Container(
+            padding=ft.Padding(12, 12, 12, 12),
+            content=ft.Column(
+                [
+                    ft.Text("Track claw runtimes here. Baba will recommend the open and local-first slot first, but it will not execute unverified install commands for you.", size=12, color=TEXT_MUTED),
+                    ft.Container(expand=True, content=claw_cards),
+                ],
+                expand=True,
+                spacing=10,
+            ),
+        ),
+    )
+
+    return ft.SelectionArea(
+        content=ft.Column(
+            [
+                ft.Row(
+                    [
+                        ft.Column(
+                            [
+                                ft.Text("Mission Control", size=18, weight=ft.FontWeight.BOLD),
+                                ft.Text("Multimodal intake, spoken progress, expandable work tabs, and claw setup tracking in one workspace.", size=12, color=TEXT_MUTED),
+                            ],
+                            spacing=4,
+                            expand=True,
+                        ),
+                        live_voice_checkbox,
+                    ],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                ),
+                ft.Divider(height=1),
+                ft.Tabs(expand=1, tabs=[quick_chat_tab, omni_tab, workspaces_tab, claw_tab]),
+            ],
+            expand=True,
+            spacing=10,
+        )
+    )
 
 
 def create_voice_screen(page: ft.Page):
@@ -3677,6 +4277,7 @@ def main(page: ft.Page):
     workspace_name = desktop_state.get("workspace_label", PROJECT_ROOT.parent.name or "Workspace")
 
     chat_screen, send_text_fn, reset_chat_fn, chat_status = create_chat_screen(page)
+    mission_control_screen = create_mission_control_screen(page, send_text_fn)
     analysis_screen = create_analysis_screen(page)
     voice_screen = create_voice_screen(page)
     commands_screen = create_commands_screen(page)
@@ -3704,6 +4305,7 @@ def main(page: ft.Page):
 
     nav_items = [
         (ft.Icons.CHAT_BUBBLE_OUTLINE_ROUNDED, "Chat", "Conversation workspace"),
+        (ft.Icons.DASHBOARD_CUSTOMIZE_OUTLINED, "Mission Control", "Multimodal and live task workspace"),
         (ft.Icons.PAGEVIEW_ROUNDED, "Analysis", "Expanded task and preview workspace"),
         (ft.Icons.TUNE_ROUNDED, "Customize", "Desktop preferences"),
         (ft.Icons.RECORD_VOICE_OVER_OUTLINED, "Voice", "Speech output"),
@@ -3722,6 +4324,7 @@ def main(page: ft.Page):
 
     screens = [
         chat_screen,
+        mission_control_screen,
         analysis_screen,
         customize_screen,
         voice_screen,
