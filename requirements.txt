@@ -1,0 +1,17 @@
+# Baba Code Requirements
+# Python dependencies for local AI provider support
+
+# HTTP client for API communication
+httpx>=0.25.0
+
+# Environment variable loading
+python-dotenv>=1.0.0
+
+# Optional: For better async support
+anyio>=4.0.0
+
+# Optional: For enhanced logging
+rich>=13.0.0
+
+# Optional: For configuration validation
+pydantic>=2.0.0
