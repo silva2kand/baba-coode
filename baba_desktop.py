@@ -1714,7 +1714,21 @@ def create_mission_control_screen(page: ft.Page, send_chat_message=None):
     )
     file_summary = ft.Text("No source analyzed yet.", size=12, color=TEXT_MUTED, selectable=True)
     file_preview = ft.Text("Preview will appear here.", size=12, color=TEXT_MUTED, selectable=True)
-    workspaces = ft.Tabs(expand=1, animation_duration=150)
+    workspace_tab_bar = ft.TabBar(tabs=[], scrollable=True)
+    workspace_tab_view = ft.TabBarView(controls=[], expand=True)
+    workspaces = ft.Tabs(
+        expand=1,
+        animation_duration=150,
+        length=0,
+        content=ft.Column(
+            [
+                workspace_tab_bar,
+                ft.Container(expand=True, content=workspace_tab_view),
+            ],
+            expand=True,
+            spacing=8,
+        ),
+    )
     workspace_counter = {"value": 0}
 
     def persist_live_voice_setting():
@@ -1751,22 +1765,21 @@ def create_mission_control_screen(page: ft.Page, send_chat_message=None):
             border_radius=16,
             bgcolor=CARD_BG,
         )
-        workspaces.tabs.append(
-            ft.Tab(
-                text=resolved_title,
-                content=ft.Container(
-                    padding=ft.Padding(10, 10, 10, 10),
-                    content=ft.Column(
-                        [
-                            ft.Text("Scratch workspace", size=14, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
-                            scratchpad,
-                        ],
-                        spacing=8,
-                    ),
+        workspace_tab_bar.tabs.append(ft.Tab(label=resolved_title))
+        workspace_tab_view.controls.append(
+            ft.Container(
+                padding=ft.Padding(10, 10, 10, 10),
+                content=ft.Column(
+                    [
+                        ft.Text("Scratch workspace", size=14, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
+                        scratchpad,
+                    ],
+                    spacing=8,
                 ),
             )
         )
-        workspaces.selected_index = len(workspaces.tabs) - 1
+        workspaces.length = len(workspace_tab_bar.tabs)
+        workspaces.selected_index = len(workspace_tab_bar.tabs) - 1
         log_activity(f"Opened {resolved_title}")
 
     def send_quick_prompt(e=None):
@@ -1996,116 +2009,107 @@ def create_mission_control_screen(page: ft.Page, send_chat_message=None):
     add_workspace_tab("Workspace 1")
     add_workspace_tab("Workspace 2")
 
-    quick_chat_tab = ft.Tab(
-        text="Quick Chat",
-        content=ft.Container(
-            padding=ft.Padding(12, 12, 12, 12),
-            content=ft.Column(
-                [
-                    ft.Text("Keep working here while chat continues in the main conversation pane.", size=12, color=TEXT_MUTED),
-                    ft.Row([quick_prompt, ft.Button("Send", icon=ft.Icons.SEND, on_click=send_quick_prompt)], spacing=8),
-                    mission_status,
-                    ft.Row(
-                        [
-                            ft.Button("Start task", icon=ft.Icons.PLAY_CIRCLE, on_click=lambda e: log_activity("Started a new task cycle")),
-                            ft.Button("Step complete", icon=ft.Icons.CHECK_CIRCLE, on_click=lambda e: log_activity("Completed a task step")),
-                            ft.Button("Safety review", icon=ft.Icons.SECURITY, on_click=lambda e: log_activity("Ran a safety and setup review checkpoint")),
-                        ],
-                        spacing=8,
-                        wrap=True,
-                    ),
-                    ft.Container(
-                        expand=True,
-                        bgcolor=PANEL_BG,
-                        border=ft.Border.all(1, BORDER_COLOR),
-                        border_radius=18,
-                        padding=ft.Padding(12, 12, 12, 12),
-                        content=activity_list,
-                    ),
-                ],
-                expand=True,
-                spacing=10,
-            ),
+    quick_chat_content = ft.Container(
+        padding=ft.Padding(12, 12, 12, 12),
+        content=ft.Column(
+            [
+                ft.Text("Keep working here while chat continues in the main conversation pane.", size=12, color=TEXT_MUTED),
+                ft.Row([quick_prompt, ft.Button("Send", icon=ft.Icons.SEND, on_click=send_quick_prompt)], spacing=8),
+                mission_status,
+                ft.Row(
+                    [
+                        ft.Button("Start task", icon=ft.Icons.PLAY_CIRCLE, on_click=lambda e: log_activity("Started a new task cycle")),
+                        ft.Button("Step complete", icon=ft.Icons.CHECK_CIRCLE, on_click=lambda e: log_activity("Completed a task step")),
+                        ft.Button("Safety review", icon=ft.Icons.SECURITY, on_click=lambda e: log_activity("Ran a safety and setup review checkpoint")),
+                    ],
+                    spacing=8,
+                    wrap=True,
+                ),
+                ft.Container(
+                    expand=True,
+                    bgcolor=PANEL_BG,
+                    border=ft.Border.all(1, BORDER_COLOR),
+                    border_radius=18,
+                    padding=ft.Padding(12, 12, 12, 12),
+                    content=activity_list,
+                ),
+            ],
+            expand=True,
+            spacing=10,
         ),
     )
 
-    omni_tab = ft.Tab(
-        text="Omni Intake",
-        content=ft.Container(
-            padding=ft.Padding(12, 12, 12, 12),
-            content=ft.Column(
-                [
-                    ft.Text("Text, images, audio, and video can be routed here before you send them into chat.", size=12, color=TEXT_MUTED),
-                    ft.Row([file_path_field], spacing=8),
-                    ft.Row(
+    omni_content = ft.Container(
+        padding=ft.Padding(12, 12, 12, 12),
+        content=ft.Column(
+            [
+                ft.Text("Text, images, audio, and video can be routed here before you send them into chat.", size=12, color=TEXT_MUTED),
+                ft.Row([file_path_field], spacing=8),
+                ft.Row(
+                    [
+                        ft.Button("Analyze", icon=ft.Icons.AUTO_AWESOME, on_click=analyze_source),
+                        ft.Button("Open", icon=ft.Icons.OPEN_IN_NEW, on_click=open_source),
+                        ft.Button("Send To Chat", icon=ft.Icons.FORWARD_TO_INBOX, on_click=send_source_to_chat),
+                        ft.OutlinedButton("Narrate", icon=ft.Icons.RECORD_VOICE_OVER, on_click=narrate_source),
+                    ],
+                    spacing=8,
+                    wrap=True,
+                ),
+                ft.Container(
+                    bgcolor=CARD_BG,
+                    border=ft.Border.all(1, BORDER_COLOR),
+                    border_radius=18,
+                    padding=ft.Padding(12, 10, 12, 10),
+                    content=ft.Column(
                         [
-                            ft.Button("Analyze", icon=ft.Icons.AUTO_AWESOME, on_click=analyze_source),
-                            ft.Button("Open", icon=ft.Icons.OPEN_IN_NEW, on_click=open_source),
-                            ft.Button("Send To Chat", icon=ft.Icons.FORWARD_TO_INBOX, on_click=send_source_to_chat),
-                            ft.OutlinedButton("Narrate", icon=ft.Icons.RECORD_VOICE_OVER, on_click=narrate_source),
+                            ft.Text("Analysis", size=14, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
+                            file_summary,
                         ],
-                        spacing=8,
-                        wrap=True,
+                        spacing=6,
                     ),
-                    ft.Container(
-                        bgcolor=CARD_BG,
-                        border=ft.Border.all(1, BORDER_COLOR),
-                        border_radius=18,
-                        padding=ft.Padding(12, 10, 12, 10),
-                        content=ft.Column(
-                            [
-                                ft.Text("Analysis", size=14, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
-                                file_summary,
-                            ],
-                            spacing=6,
-                        ),
+                ),
+                ft.Container(
+                    expand=True,
+                    bgcolor=CARD_BG,
+                    border=ft.Border.all(1, BORDER_COLOR),
+                    border_radius=18,
+                    padding=ft.Padding(12, 10, 12, 10),
+                    content=ft.Column(
+                        [
+                            ft.Text("Preview", size=14, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
+                            file_preview,
+                        ],
+                        spacing=6,
                     ),
-                    ft.Container(
-                        expand=True,
-                        bgcolor=CARD_BG,
-                        border=ft.Border.all(1, BORDER_COLOR),
-                        border_radius=18,
-                        padding=ft.Padding(12, 10, 12, 10),
-                        content=ft.Column(
-                            [
-                                ft.Text("Preview", size=14, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
-                                file_preview,
-                            ],
-                            spacing=6,
-                        ),
-                    ),
-                ],
-                expand=True,
-                spacing=10,
-            ),
+                ),
+            ],
+            expand=True,
+            spacing=10,
         ),
     )
 
-    workspaces_tab = ft.Tab(
-        text="Workspaces",
-        content=ft.Container(
-            padding=ft.Padding(12, 12, 12, 12),
-            content=ft.Column(
-                [
-                    ft.Row(
-                        [
-                            ft.Text("Open extra tabs while Baba works so you can keep notes and drafts moving.", size=12, color=TEXT_MUTED, expand=True),
-                            ft.Button("Add Workspace Tab", icon=ft.Icons.ADD_BOX, on_click=lambda e: add_workspace_tab()),
-                        ],
-                        spacing=8,
-                    ),
-                    ft.Container(
-                        expand=True,
-                        bgcolor=PANEL_BG,
-                        border=ft.Border.all(1, BORDER_COLOR),
-                        border_radius=18,
-                        padding=ft.Padding(8, 8, 8, 8),
-                        content=workspaces,
-                    ),
-                ],
-                expand=True,
-                spacing=10,
-            ),
+    workspaces_content = ft.Container(
+        padding=ft.Padding(12, 12, 12, 12),
+        content=ft.Column(
+            [
+                ft.Row(
+                    [
+                        ft.Text("Open extra tabs while Baba works so you can keep notes and drafts moving.", size=12, color=TEXT_MUTED, expand=True),
+                        ft.Button("Add Workspace Tab", icon=ft.Icons.ADD_BOX, on_click=lambda e: add_workspace_tab()),
+                    ],
+                    spacing=8,
+                ),
+                ft.Container(
+                    expand=True,
+                    bgcolor=PANEL_BG,
+                    border=ft.Border.all(1, BORDER_COLOR),
+                    border_radius=18,
+                    padding=ft.Padding(8, 8, 8, 8),
+                    content=workspaces,
+                ),
+            ],
+            expand=True,
+            spacing=10,
         ),
     )
 
@@ -2118,49 +2122,46 @@ def create_mission_control_screen(page: ft.Page, send_chat_message=None):
         ],
         border_radius=14,
         bgcolor=CARD_BG,
-        on_change=on_routing_preset_change,
+        on_select=on_routing_preset_change,
     )
     refresh_router_cards()
 
-    router_tab = ft.Tab(
-        text="Model Router",
-        content=ft.Container(
-            padding=ft.Padding(12, 12, 12, 12),
-            content=ft.Column(
-                [
-                    ft.Text("Apply a real local routing preset across Ollama, LM Studio, and Jan using your installed Qwen and Gemma models.", size=12, color=TEXT_MUTED),
-                    routing_preset_dropdown,
-                    ft.Row(
+    router_content = ft.Container(
+        padding=ft.Padding(12, 12, 12, 12),
+        content=ft.Column(
+            [
+                ft.Text("Apply a real local routing preset across Ollama, LM Studio, and Jan using your installed Qwen and Gemma models.", size=12, color=TEXT_MUTED),
+                routing_preset_dropdown,
+                ft.Row(
+                    [
+                        ft.Button("Apply Routing Preset", icon=ft.Icons.HUB, on_click=apply_selected_routing),
+                        ft.OutlinedButton("Export Config", icon=ft.Icons.DOWNLOAD, on_click=export_selected_routing),
+                        ft.OutlinedButton("Send To Chat", icon=ft.Icons.FORWARD_TO_INBOX, on_click=send_routing_to_chat),
+                        ft.OutlinedButton("Narrate", icon=ft.Icons.RECORD_VOICE_OVER, on_click=lambda e: queue_voice_narration(build_routing_summary(selected_routing_preset["value"])) or None),
+                    ],
+                    spacing=8,
+                    wrap=True,
+                ),
+                ft.Container(
+                    bgcolor=CARD_BG,
+                    border=ft.Border.all(1, BORDER_COLOR),
+                    border_radius=18,
+                    padding=ft.Padding(12, 10, 12, 10),
+                    content=ft.Column(
                         [
-                            ft.Button("Apply Routing Preset", icon=ft.Icons.HUB, on_click=apply_selected_routing),
-                            ft.OutlinedButton("Export Config", icon=ft.Icons.DOWNLOAD, on_click=export_selected_routing),
-                            ft.OutlinedButton("Send To Chat", icon=ft.Icons.FORWARD_TO_INBOX, on_click=send_routing_to_chat),
-                            ft.OutlinedButton("Narrate", icon=ft.Icons.RECORD_VOICE_OVER, on_click=lambda e: queue_voice_narration(build_routing_summary(selected_routing_preset["value"])) or None),
+                            ft.Text("Routing Summary", size=14, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
+                            routing_summary,
                         ],
-                        spacing=8,
-                        wrap=True,
+                        spacing=6,
                     ),
-                    ft.Container(
-                        bgcolor=CARD_BG,
-                        border=ft.Border.all(1, BORDER_COLOR),
-                        border_radius=18,
-                        padding=ft.Padding(12, 10, 12, 10),
-                        content=ft.Column(
-                            [
-                                ft.Text("Routing Summary", size=14, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
-                                routing_summary,
-                            ],
-                            spacing=6,
-                        ),
-                    ),
-                    ft.Container(
-                        expand=True,
-                        content=router_cards_view,
-                    ),
-                ],
-                expand=True,
-                spacing=10,
-            ),
+                ),
+                ft.Container(
+                    expand=True,
+                    content=router_cards_view,
+                ),
+            ],
+            expand=True,
+            spacing=10,
         ),
     )
 
@@ -2169,18 +2170,49 @@ def create_mission_control_screen(page: ft.Page, send_chat_message=None):
         spacing=10,
         scroll=ft.ScrollMode.AUTO,
     )
-    claw_tab = ft.Tab(
-        text="Claw Hub",
-        content=ft.Container(
-            padding=ft.Padding(12, 12, 12, 12),
-            content=ft.Column(
-                [
-                    ft.Text("Track claw runtimes here. Baba will recommend the open and local-first slot first, but it will not execute unverified install commands for you.", size=12, color=TEXT_MUTED),
-                    ft.Container(expand=True, content=claw_cards),
-                ],
-                expand=True,
-                spacing=10,
-            ),
+    claw_content = ft.Container(
+        padding=ft.Padding(12, 12, 12, 12),
+        content=ft.Column(
+            [
+                ft.Text("Track claw runtimes here. Baba will recommend the open and local-first slot first, but it will not execute unverified install commands for you.", size=12, color=TEXT_MUTED),
+                ft.Container(expand=True, content=claw_cards),
+            ],
+            expand=True,
+            spacing=10,
+        ),
+    )
+
+    mission_tab_bar = ft.TabBar(
+        tabs=[
+            ft.Tab(label="Quick Chat"),
+            ft.Tab(label="Omni Intake"),
+            ft.Tab(label="Workspaces"),
+            ft.Tab(label="Model Router"),
+            ft.Tab(label="Claw Hub"),
+        ],
+        scrollable=True,
+    )
+    mission_tab_view = ft.TabBarView(
+        controls=[
+            quick_chat_content,
+            omni_content,
+            workspaces_content,
+            router_content,
+            claw_content,
+        ],
+        expand=True,
+    )
+    mission_tabs = ft.Tabs(
+        expand=1,
+        animation_duration=150,
+        length=5,
+        content=ft.Column(
+            [
+                mission_tab_bar,
+                ft.Container(expand=True, content=mission_tab_view),
+            ],
+            expand=True,
+            spacing=8,
         ),
     )
 
@@ -2202,7 +2234,7 @@ def create_mission_control_screen(page: ft.Page, send_chat_message=None):
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 ),
                 ft.Divider(height=1),
-                ft.Tabs(expand=1, tabs=[quick_chat_tab, omni_tab, workspaces_tab, router_tab, claw_tab]),
+                mission_tabs,
             ],
             expand=True,
             spacing=10,

@@ -13,7 +13,9 @@ venv/
 .port_sessions/
 .baba_artifacts/
 .baba_desktop_state.json
+.business_brain/
 voice_output.mp3
+voice_output_*.mp3
 
 .pytest_cache/
 .mypy_cache/
