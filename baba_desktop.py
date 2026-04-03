@@ -4475,8 +4475,6 @@ def create_business_brain_screen(page: ft.Page):
         )
 
     inbox_path = get_business_brain_inbox(PROJECT_ROOT)
-    inbox_path.mkdir(parents=True, exist_ok=True)
-    ensure_business_brain_db(PROJECT_ROOT)
 
     intake_path_field = ft.TextField(
         label="Intake path",
@@ -4486,8 +4484,8 @@ def create_business_brain_screen(page: ft.Page):
         bgcolor=CARD_BG,
         expand=True,
     )
-    schema_text = ft.Text(business_brain_schema_overview(), size=12, color=TEXT_PRIMARY, selectable=True)
-    status_text = ft.Text("Business Brain ready", size=12, color=TEXT_MUTED)
+    schema_text = ft.Text("Loading schema overview...", size=12, color=TEXT_PRIMARY, selectable=True)
+    status_text = ft.Text("Loading Business Brain...", size=12, color=TEXT_MUTED)
     db_path_text = ft.Text(str(get_business_brain_db_path(PROJECT_ROOT)), size=11, color=TEXT_MUTED, selectable=True)
     total_text = ft.Text("0", size=24, weight=ft.FontWeight.W_700, color=TEXT_PRIMARY)
     risk_text = ft.Text("0", size=24, weight=ft.FontWeight.W_700, color=WARNING)
@@ -4516,89 +4514,109 @@ def create_business_brain_screen(page: ft.Page):
         )
 
     def refresh_business_brain(e=None):
-        overview = get_business_brain_overview(PROJECT_ROOT)
-        total_text.value = str(overview["total_documents"])
-        risk_text.value = str(overview["high_risk"])
-        renewals_text.value = str(overview["renewals"])
-        money_text.value = str(overview["money_items"])
-        db_path_text.value = overview["db_path"]
-
-        domains_column.controls.clear()
-        for row in overview["domains"][:8]:
-            domains_column.controls.append(
-                ft.Container(
-                    bgcolor=CARD_BG,
-                    border=ft.Border.all(1, BORDER_COLOR),
-                    border_radius=16,
-                    padding=ft.Padding(12, 10, 12, 10),
-                    content=ft.Row(
-                        [
-                            ft.Text(str(row["domain"]).title(), size=13, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
-                            ft.Text(str(row["count"]), size=12, color=ACCENT),
-                        ],
-                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                    ),
-                )
-            )
-        if not domains_column.controls:
-            domains_column.controls.append(ft.Text("No indexed domains yet.", size=12, color=TEXT_MUTED))
-
-        counterparties_column.controls.clear()
-        for row in overview["counterparties"]:
-            counterparties_column.controls.append(
-                ft.Container(
-                    bgcolor=CARD_BG,
-                    border=ft.Border.all(1, BORDER_COLOR),
-                    border_radius=16,
-                    padding=ft.Padding(12, 10, 12, 10),
-                    content=ft.Row(
-                        [
-                            ft.Text(str(row["counterparty"]), size=12, color=TEXT_PRIMARY, expand=True, selectable=True),
-                            ft.Text(str(row["count"]), size=12, color=ACCENT),
-                        ],
-                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                    ),
-                )
-            )
-        if not counterparties_column.controls:
-            counterparties_column.controls.append(ft.Text("No counterparties clustered yet.", size=12, color=TEXT_MUTED))
-
-        recent_column.controls.clear()
-        for row in overview["recent"]:
-            recent_column.controls.append(
-                ft.Container(
-                    bgcolor=CARD_BG,
-                    border=ft.Border.all(1, BORDER_COLOR),
-                    border_radius=16,
-                    padding=ft.Padding(12, 10, 12, 10),
-                    content=ft.Column(
-                        [
-                            ft.Row(
-                                [
-                                    ft.Text(str(row["source_name"]), size=13, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY, expand=True),
-                                    ft.Text(str(row["risk_level"]).upper(), size=11, color=WARNING if row["risk_level"] != "normal" else TEXT_MUTED),
-                                ],
-                                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                            ),
-                            ft.Text(f"{row['source_kind']} | {row['domain']} | {row.get('counterparty') or 'unknown counterparty'}", size=11, color=TEXT_MUTED, selectable=True),
-                            ft.Text(str(row["summary"]), size=12, color=TEXT_PRIMARY, selectable=True),
-                        ],
-                        spacing=5,
-                    ),
-                )
-            )
-        if not recent_column.controls:
-            recent_column.controls.append(ft.Text("No indexed records yet.", size=12, color=TEXT_MUTED))
-
-        opportunities = overview["opportunities"]
-        opportunities_text.value = "\n".join(f"- {item}" for item in opportunities) if opportunities else "No opportunities surfaced yet."
+        status_text.value = "Refreshing Business Brain..."
+        status_text.color = TEXT_MUTED
         page.update()
 
+        def do_refresh():
+            inbox_path.mkdir(parents=True, exist_ok=True)
+            ensure_business_brain_db(PROJECT_ROOT)
+            overview = get_business_brain_overview(PROJECT_ROOT)
+            total_text.value = str(overview["total_documents"])
+            risk_text.value = str(overview["high_risk"])
+            renewals_text.value = str(overview["renewals"])
+            money_text.value = str(overview["money_items"])
+            db_path_text.value = overview["db_path"]
+            schema_text.value = business_brain_schema_overview()
+
+            domains_column.controls.clear()
+            for row in overview["domains"][:8]:
+                domains_column.controls.append(
+                    ft.Container(
+                        bgcolor=CARD_BG,
+                        border=ft.Border.all(1, BORDER_COLOR),
+                        border_radius=16,
+                        padding=ft.Padding(12, 10, 12, 10),
+                        content=ft.Row(
+                            [
+                                ft.Text(str(row["domain"]).title(), size=13, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY),
+                                ft.Text(str(row["count"]), size=12, color=ACCENT),
+                            ],
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        ),
+                    )
+                )
+            if not domains_column.controls:
+                domains_column.controls.append(ft.Text("No indexed domains yet.", size=12, color=TEXT_MUTED))
+
+            counterparties_column.controls.clear()
+            for row in overview["counterparties"]:
+                counterparties_column.controls.append(
+                    ft.Container(
+                        bgcolor=CARD_BG,
+                        border=ft.Border.all(1, BORDER_COLOR),
+                        border_radius=16,
+                        padding=ft.Padding(12, 10, 12, 10),
+                        content=ft.Row(
+                            [
+                                ft.Text(str(row["counterparty"]), size=12, color=TEXT_PRIMARY, expand=True, selectable=True),
+                                ft.Text(str(row["count"]), size=12, color=ACCENT),
+                            ],
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        ),
+                    )
+                )
+            if not counterparties_column.controls:
+                counterparties_column.controls.append(ft.Text("No counterparties clustered yet.", size=12, color=TEXT_MUTED))
+
+            recent_column.controls.clear()
+            for row in overview["recent"]:
+                recent_column.controls.append(
+                    ft.Container(
+                        bgcolor=CARD_BG,
+                        border=ft.Border.all(1, BORDER_COLOR),
+                        border_radius=16,
+                        padding=ft.Padding(12, 10, 12, 10),
+                        content=ft.Column(
+                            [
+                                ft.Row(
+                                    [
+                                        ft.Text(str(row["source_name"]), size=13, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY, expand=True),
+                                        ft.Text(str(row["risk_level"]).upper(), size=11, color=WARNING if row["risk_level"] != "normal" else TEXT_MUTED),
+                                    ],
+                                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                                ),
+                                ft.Text(f"{row['source_kind']} | {row['domain']} | {row.get('counterparty') or 'unknown counterparty'}", size=11, color=TEXT_MUTED, selectable=True),
+                                ft.Text(str(row["summary"]), size=12, color=TEXT_PRIMARY, selectable=True),
+                            ],
+                            spacing=5,
+                        ),
+                    )
+                )
+            if not recent_column.controls:
+                recent_column.controls.append(ft.Text("No indexed records yet.", size=12, color=TEXT_MUTED))
+
+            opportunities = overview["opportunities"]
+            opportunities_text.value = "\n".join(f"- {item}" for item in opportunities) if opportunities else "No opportunities surfaced yet."
+            status_text.value = "Business Brain ready"
+            status_text.color = SUCCESS
+            page.update()
+
+        threading.Thread(target=do_refresh, daemon=True).start()
+
     def ingest_now(e=None):
-        result = ingest_business_brain_path(PROJECT_ROOT, intake_path_field.value or "")
-        status_text.value = result["message"]
-        status_text.color = SUCCESS if result.get("ok") else WARNING
-        refresh_business_brain()
+        status_text.value = "Scanning intake path..."
+        status_text.color = TEXT_MUTED
+        page.update()
+
+        def do_ingest():
+            result = ingest_business_brain_path(PROJECT_ROOT, intake_path_field.value or "")
+            status_text.value = result["message"]
+            status_text.color = SUCCESS if result.get("ok") else WARNING
+            page.update()
+            refresh_business_brain()
+
+        threading.Thread(target=do_ingest, daemon=True).start()
 
     def open_inbox(e=None):
         target = Path(intake_path_field.value or str(inbox_path)).expanduser()
@@ -4797,7 +4815,6 @@ def create_reasoning_sandbox_screen(page: ft.Page, send_chat_message=None):
             content=ft.Text("Reasoning Sandbox needs the local src modules available.", size=13, color=WARNING),
         )
 
-    tasks_dir = ensure_reasoning_sample_tasks(PROJECT_ROOT)
     task_path_field = ft.TextField(
         label="Task file path",
         hint_text="ARC-style .json task or a plain text reasoning prompt file",
@@ -4847,19 +4864,24 @@ def create_reasoning_sandbox_screen(page: ft.Page, send_chat_message=None):
     score_output = ft.Text("No score yet.", size=12, color=TEXT_MUTED, selectable=True)
     scoreboard_output = ft.Text("No model scores recorded yet.", size=12, color=TEXT_MUTED, selectable=True)
     attempts_output = ft.Text("No attempt history recorded yet.", size=12, color=TEXT_MUTED, selectable=True)
-    status_text = ft.Text("Reasoning sandbox ready", size=12, color=TEXT_MUTED)
+    status_text = ft.Text("Loading reasoning sandbox...", size=12, color=TEXT_MUTED)
     current_task = {"value": None}
     score_history: list[dict[str, object]] = []
     sandbox_sources: list[dict[str, str]] = []
     source_dropdown = ft.Dropdown(label="Recent source", width=420, bgcolor=CARD_BG, border_radius=14)
 
     def refresh_sample_tasks():
-        sample_task_dropdown.options = [ft.dropdown.Option("", "Select bundled task")]
-        sample_task_dropdown.options.extend(
-            ft.dropdown.Option(item["path"], item["label"]) for item in list_reasoning_tasks(PROJECT_ROOT)
-        )
-        if sample_task_dropdown.value is None:
-            sample_task_dropdown.value = ""
+        def do_refresh():
+            ensure_reasoning_sample_tasks(PROJECT_ROOT)
+            sample_task_dropdown.options = [ft.dropdown.Option("", "Select bundled task")]
+            sample_task_dropdown.options.extend(
+                ft.dropdown.Option(item["path"], item["label"]) for item in list_reasoning_tasks(PROJECT_ROOT)
+            )
+            if sample_task_dropdown.value is None:
+                sample_task_dropdown.value = ""
+            page.update()
+
+        threading.Thread(target=do_refresh, daemon=True).start()
 
     def refresh_scoreboard():
         if not score_history:
@@ -4892,14 +4914,24 @@ def create_reasoning_sandbox_screen(page: ft.Page, send_chat_message=None):
 
     def refresh_sources(e=None):
         nonlocal sandbox_sources
-        sandbox_sources = gather_preview_sources(limit=24)
-        source_dropdown.options = [ft.dropdown.Option("", "Select recent source")]
-        source_dropdown.options.extend(
-            ft.dropdown.Option(source["path"], source["label"]) for source in sandbox_sources
-        )
-        if source_dropdown.value is None:
-            source_dropdown.value = ""
+        status_text.value = "Refreshing recent sources..."
+        status_text.color = TEXT_MUTED
         page.update()
+
+        def do_refresh():
+            nonlocal sandbox_sources
+            sandbox_sources = gather_preview_sources(limit=24)
+            source_dropdown.options = [ft.dropdown.Option("", "Select recent source")]
+            source_dropdown.options.extend(
+                ft.dropdown.Option(source["path"], source["label"]) for source in sandbox_sources
+            )
+            if source_dropdown.value is None:
+                source_dropdown.value = ""
+            status_text.value = "Reasoning sandbox ready"
+            status_text.color = SUCCESS
+            page.update()
+
+        threading.Thread(target=do_refresh, daemon=True).start()
 
     def load_selected_source(e=None):
         if not source_dropdown.value:
@@ -5029,8 +5061,8 @@ def create_reasoning_sandbox_screen(page: ft.Page, send_chat_message=None):
         status_text.color = SUCCESS
         page.update()
 
-    refresh_sources()
     refresh_sample_tasks()
+    refresh_sources()
     source_dropdown.on_change = load_selected_source
     sample_task_dropdown.on_change = load_sample_task
 
