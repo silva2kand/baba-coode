@@ -1180,32 +1180,43 @@ def create_chat_screen(page: ft.Page):
     is_streaming = {"value": False}
     last_response_text = {"value": ""}
     current_voice = {"value": TTS_VOICES[0]}
-
-    detected_ai = detect_local_ai()
-    auto_provider, auto_name, auto_url, auto_model = auto_connect_ai()
-
-    if auto_provider:
-        status_msg = f"Connected to {auto_name} with model {auto_model}"
-    else:
-        running_ais = [info["name"] for info in detected_ai.values() if info["running"]]
-        if running_ais:
-            status_msg = f"Detected {', '.join(running_ais)} but the API did not answer"
-        else:
-            status_msg = "No local AI detected. Start Jan, Ollama, or LM Studio to connect."
+    status_msg = "Checking local AI providers..."
+    status_icon = ft.Icon(ft.Icons.CIRCLE, size=10, color=TEXT_MUTED)
+    status_text = ft.Text(status_msg, size=12, color=TEXT_MUTED)
 
     status_bar = ft.Container(
         content=ft.Row(
             [
-                ft.Icon(ft.Icons.CIRCLE, size=10, color=SUCCESS if auto_provider else WARNING),
-                ft.Text(status_msg, size=12, color=TEXT_MUTED),
+                status_icon,
+                status_text,
             ],
             spacing=8,
         ),
-        bgcolor=ACCENT_SOFT if auto_provider else "#F3E6C8",
+        bgcolor="#F3E6C8",
         border=ft.Border.all(1, BORDER_COLOR),
         border_radius=999,
         padding=ft.Padding(12, 8, 12, 8),
     )
+
+    def refresh_local_ai_status():
+        detected_ai = detect_local_ai()
+        auto_provider, auto_name, _auto_url, auto_model = auto_connect_ai()
+
+        if auto_provider:
+            status_icon.color = SUCCESS
+            status_text.value = f"Connected to {auto_name} with model {auto_model}"
+            status_bar.bgcolor = ACCENT_SOFT
+        else:
+            running_ais = [info["name"] for info in detected_ai.values() if info["running"]]
+            status_icon.color = WARNING
+            if running_ais:
+                status_text.value = f"Detected {', '.join(running_ais)} but the API did not answer"
+            else:
+                status_text.value = "No local AI detected. Start Jan, Ollama, or LM Studio to connect."
+            status_bar.bgcolor = "#F3E6C8"
+        page.update()
+
+    threading.Thread(target=refresh_local_ai_status, daemon=True).start()
 
     def build_quick_prompt(label: str, prompt: str, icon: str):
         return ft.OutlinedButton(
@@ -5345,33 +5356,13 @@ def main(page: ft.Page):
     workspace_name = desktop_state.get("workspace_label", PROJECT_ROOT.parent.name or "Workspace")
 
     chat_screen, send_text_fn, reset_chat_fn, chat_status = create_chat_screen(page)
-    mission_control_screen = create_mission_control_screen(page, send_text_fn)
-    analysis_screen = create_analysis_screen(page)
-    reasoning_sandbox_screen = create_reasoning_sandbox_screen(page, send_text_fn)
-    business_brain_screen = create_business_brain_screen(page)
-    voice_screen = create_voice_screen(page)
-    commands_screen = create_commands_screen(page)
-    tools_screen = create_tools_screen(page)
-    history_screen = create_history_screen(page)
     provider_state_hooks = {"refresh": lambda: None}
-
-    settings_screen = create_settings_screen(page, lambda: provider_state_hooks["refresh"]())
-    connectors_screen = create_connectors_screen(page)
-    customize_screen = None
-    skills_screen = create_skills_screen(page)
-    memory_screen = create_memory_screen(page)
-    artifacts_screen = create_artifacts_screen(page)
-    runtime_screen = create_runtime_screen(page)
-    diagnostics_screen = create_diagnostics_screen(page, lambda: provider_state_hooks["refresh"]())
-    apis_screen = create_free_apis_screen(page, lambda: provider_state_hooks["refresh"]())
 
     workspace_name_text = ft.Text(workspace_name, size=14, weight=ft.FontWeight.W_600, color=TEXT_PRIMARY)
 
     def apply_workspace_label(label: str):
         workspace_name_text.value = label or "Workspace"
         page.update()
-
-    customize_screen = create_customize_screen(page, apply_workspace_label, rebuild_app_for_theme)
 
     nav_items = [
         (ft.Icons.CHAT_BUBBLE_OUTLINE_ROUNDED, "Chat", "Conversation workspace"),
@@ -5394,34 +5385,55 @@ def main(page: ft.Page):
         (ft.Icons.SETTINGS_OUTLINED, "Settings", "Provider configuration"),
     ]
 
-    screens = [
-        chat_screen,
-        mission_control_screen,
-        analysis_screen,
-        reasoning_sandbox_screen,
-        business_brain_screen,
-        customize_screen,
-        voice_screen,
-        memory_screen,
-        artifacts_screen,
-        runtime_screen,
-        diagnostics_screen,
-        skills_screen,
-        commands_screen,
-        tools_screen,
-        connectors_screen,
-        history_screen,
-        apis_screen,
-        settings_screen,
+    screen_loading_placeholder = ft.Container(
+        alignment=CENTER,
+        expand=True,
+        content=ft.Column(
+            [
+                ft.ProgressRing(width=28, height=28, color=ACCENT),
+                ft.Text("Loading workspace...", size=12, color=TEXT_MUTED),
+            ],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=12,
+        ),
+    )
+
+    screen_cache = [None] * len(nav_items)
+    screen_cache[0] = chat_screen
+    screen_factories = [
+        lambda: chat_screen,
+        lambda: create_mission_control_screen(page, send_text_fn),
+        lambda: create_analysis_screen(page),
+        lambda: create_reasoning_sandbox_screen(page, send_text_fn),
+        lambda: create_business_brain_screen(page),
+        lambda: create_customize_screen(page, apply_workspace_label, rebuild_app_for_theme),
+        lambda: create_voice_screen(page),
+        lambda: create_memory_screen(page),
+        lambda: create_artifacts_screen(page),
+        lambda: create_runtime_screen(page),
+        lambda: create_diagnostics_screen(page, lambda: provider_state_hooks["refresh"]()),
+        lambda: create_skills_screen(page),
+        lambda: create_commands_screen(page),
+        lambda: create_tools_screen(page),
+        lambda: create_connectors_screen(page),
+        lambda: create_history_screen(page),
+        lambda: create_free_apis_screen(page, lambda: provider_state_hooks["refresh"]()),
+        lambda: create_settings_screen(page, lambda: provider_state_hooks["refresh"]()),
     ]
 
     current_title = ft.Text("Chat", size=28, weight=ft.FontWeight.W_700, color=TEXT_PRIMARY)
     current_subtitle = ft.Text("Conversation workspace", size=12, color=TEXT_MUTED)
-    current_screen = ft.Container(content=screens[0], expand=True)
+    current_screen = ft.Container(content=chat_screen, expand=True)
     nav_controls = []
 
+    def get_screen(idx: int):
+        if screen_cache[idx] is None:
+            current_screen.content = screen_loading_placeholder
+            page.update()
+            screen_cache[idx] = screen_factories[idx]()
+        return screen_cache[idx]
+
     def select_screen(idx: int):
-        current_screen.content = screens[idx]
         current_title.value = nav_items[idx][1]
         current_subtitle.value = nav_items[idx][2]
         if nav_items[idx][1] == "Analysis" and sidebar_expanded["value"]:
@@ -5430,6 +5442,7 @@ def main(page: ft.Page):
             selected = control_index == idx
             control.bgcolor = ACCENT_SOFT if selected else ft.Colors.TRANSPARENT
             control.border = ft.Border.all(1, ACCENT if selected else BORDER_COLOR)
+        current_screen.content = get_screen(idx)
         page.update()
 
     def build_nav_item(idx: int, icon: str, label: str, subtitle: str):
