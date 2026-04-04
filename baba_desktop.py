@@ -483,6 +483,68 @@ def save_local_ai_priority(priority: list[str]) -> list[str]:
 
 VOICE_NARRATOR_STATE = {"busy": False, "queue": []}
 VOICE_NARRATOR_LOCK = threading.Lock()
+AUDIO_PLAYBACK_STATE = {"alias": None}
+AUDIO_PLAYBACK_LOCK = threading.Lock()
+
+
+def _close_windows_audio_alias(alias: str | None) -> None:
+    if os.name != "nt" or not alias:
+        return
+    import ctypes
+
+    winmm = ctypes.windll.winmm
+    winmm.mciSendStringW(f"stop {alias}", None, 0, 0)
+    winmm.mciSendStringW(f"close {alias}", None, 0, 0)
+
+
+def play_audio_file(path: str | Path) -> bool:
+    resolved_path = Path(path)
+    if not resolved_path.exists():
+        return False
+
+    if os.name == "nt":
+        import winsound
+
+        with AUDIO_PLAYBACK_LOCK:
+            winsound.PlaySound(None, 0)
+            _close_windows_audio_alias(AUDIO_PLAYBACK_STATE["alias"])
+            AUDIO_PLAYBACK_STATE["alias"] = None
+
+            if resolved_path.suffix.lower() == ".wav":
+                winsound.PlaySound(
+                    str(resolved_path),
+                    winsound.SND_ASYNC | winsound.SND_FILENAME,
+                )
+                return True
+
+            import ctypes
+
+            alias = f"baba_audio_{int(time.time() * 1000)}"
+            quoted_path = str(resolved_path).replace('"', '""')
+            winmm = ctypes.windll.winmm
+            open_result = winmm.mciSendStringW(
+                f'open "{quoted_path}" type mpegvideo alias {alias}',
+                None,
+                0,
+                0,
+            )
+            if open_result != 0:
+                return False
+            play_result = winmm.mciSendStringW(f"play {alias}", None, 0, 0)
+            if play_result != 0:
+                winmm.mciSendStringW(f"close {alias}", None, 0, 0)
+                return False
+            AUDIO_PLAYBACK_STATE["alias"] = alias
+            return True
+
+    try:
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", str(resolved_path)])
+        else:
+            subprocess.Popen(["xdg-open", str(resolved_path)])
+        return True
+    except Exception:
+        return False
 
 
 def queue_voice_narration(text: str, voice_name: str | None = None) -> bool:
@@ -509,8 +571,7 @@ def queue_voice_narration(text: str, voice_name: str | None = None) -> bool:
                 output_path = PROJECT_ROOT / f"voice_output_{int(time.time() * 1000)}.mp3"
                 comm = edge_tts.Communicate(current_text, current_voice)
                 comm.save_sync(str(output_path))
-                if os.name == "nt":
-                    os.startfile(str(output_path))
+                play_audio_file(output_path)
             except Exception:
                 continue
 
@@ -1420,8 +1481,7 @@ def create_chat_screen(page: ft.Page):
                         output_path = PROJECT_ROOT / "voice_output.mp3"
                         comm = edge_tts.Communicate(response_text, cv["value"])
                         comm.save_sync(str(output_path))
-                        if os.name == "nt":
-                            os.startfile(str(output_path))
+                        play_audio_file(output_path)
                     except Exception:
                         pass
 
@@ -1587,8 +1647,7 @@ def create_chat_screen(page: ft.Page):
                                 output_path = PROJECT_ROOT / "voice_output.mp3"
                                 comm = edge_tts.Communicate(lrt["value"], cv["value"])
                                 comm.save_sync(str(output_path))
-                                if os.name == "nt":
-                                    os.startfile(str(output_path))
+                                play_audio_file(output_path)
                             except Exception:
                                 pass
 
@@ -2325,9 +2384,10 @@ def create_voice_screen(page: ft.Page):
                 output_path = PROJECT_ROOT / "voice_output.mp3"
                 comm = edge_tts.Communicate(text_input.value, voice_dropdown.value)
                 comm.save_sync(str(output_path))
-                if os.name == "nt":
-                    os.startfile(str(output_path))
-                status_text.value = "✅ Speaking complete"
+                if play_audio_file(output_path):
+                    status_text.value = "✅ Voice playback started"
+                else:
+                    status_text.value = f"✅ Voice saved to {output_path.name}"
                 status_text.color = ft.Colors.GREEN_300
                 page.update()
             except Exception as ex:
@@ -2381,9 +2441,10 @@ def create_voice_screen(page: ft.Page):
                 )
                 if result.returncode != 0:
                     raise RuntimeError(result.stderr.strip() or "Piper exited with an error")
-                if os.name == "nt":
-                    os.startfile(str(output_path))
-                status_text.value = f"✅ Piper audio saved to {output_path.name}"
+                if play_audio_file(output_path):
+                    status_text.value = f"✅ Piper playback started from {output_path.name}"
+                else:
+                    status_text.value = f"✅ Piper audio saved to {output_path.name}"
                 status_text.color = ft.Colors.GREEN_300
                 page.update()
             except Exception as ex:
@@ -5457,15 +5518,22 @@ def main(page: ft.Page):
     current_subtitle = ft.Text("Conversation workspace", size=12, color=TEXT_MUTED)
     current_screen = ft.Container(content=chat_screen, expand=True)
     nav_controls = []
+    screen_load_state = {"token": 0, "active_index": 0, "loading": set()}
 
-    def get_screen(idx: int):
-        if screen_cache[idx] is None:
-            current_screen.content = screen_loading_placeholder
+    def build_screen_async(idx: int, token: int):
+        try:
+            built_screen = screen_factories[idx]()
+            screen_cache[idx] = built_screen
+            if screen_load_state["token"] == token and screen_load_state["active_index"] == idx:
+                current_screen.content = built_screen
+        finally:
+            screen_load_state["loading"].discard(idx)
             page.update()
-            screen_cache[idx] = screen_factories[idx]()
-        return screen_cache[idx]
 
     def select_screen(idx: int):
+        screen_load_state["active_index"] = idx
+        screen_load_state["token"] += 1
+        selection_token = screen_load_state["token"]
         current_title.value = nav_items[idx][1]
         current_subtitle.value = nav_items[idx][2]
         if nav_items[idx][1] == "Analysis" and sidebar_expanded["value"]:
@@ -5474,7 +5542,21 @@ def main(page: ft.Page):
             selected = control_index == idx
             control.bgcolor = ACCENT_SOFT if selected else ft.Colors.TRANSPARENT
             control.border = ft.Border.all(1, ACCENT if selected else BORDER_COLOR)
-        current_screen.content = get_screen(idx)
+        if screen_cache[idx] is not None:
+            current_screen.content = screen_cache[idx]
+            page.update()
+            return
+
+        loading_label = screen_loading_placeholder.content.controls[1]
+        loading_label.value = f"Loading {nav_items[idx][1]}..."
+        current_screen.content = screen_loading_placeholder
+        if idx not in screen_load_state["loading"]:
+            screen_load_state["loading"].add(idx)
+            threading.Thread(
+                target=build_screen_async,
+                args=(idx, selection_token),
+                daemon=True,
+            ).start()
         page.update()
 
     def build_nav_item(idx: int, icon: str, label: str, subtitle: str):
