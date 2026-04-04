@@ -10,18 +10,29 @@ export function Sidebar({ open, activePanel, onPanelChange }: SidebarProps) {
   }
 
   const buttonClass = (panel: 'chat' | 'settings') =>
-    `w-full rounded border px-3 py-2 text-left text-sm ${activePanel === panel ? 'border-blue-500' : 'border-gray-600'}`
+    `w-full rounded-2xl border px-3 py-3 text-left text-sm transition ${activePanel === panel ? 'border-claude-text bg-white text-claude-text shadow-sm' : 'border-transparent text-claude-secondary hover:border-claude-border hover:bg-white'}`
 
   return (
-    <aside className="w-64 border-r border-gray-700 p-3">
+    <aside className="flex w-72 flex-col border-r border-claude-border bg-claude-sidebar p-3">
+      <div className="mb-4 rounded-2xl border border-claude-border bg-white p-4 shadow-sm">
+        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-claude-secondary">Workspace</div>
+        <div className="mt-2 text-sm text-claude-text">Local-first command center with an offline assistant and provider scaffolding.</div>
+      </div>
+
       <nav className="space-y-2">
         <button type="button" className={buttonClass('chat')} onClick={() => onPanelChange('chat')}>
-          Chat
+          <div className="font-medium">Command Chat</div>
+          <div className="mt-1 text-xs opacity-70">Use the built-in assistant and quick commands.</div>
         </button>
         <button type="button" className={buttonClass('settings')} onClick={() => onPanelChange('settings')}>
-          Settings
+          <div className="font-medium">Settings Hub</div>
+          <div className="mt-1 text-xs opacity-70">Models, agents, tools, privacy, layout, voice, and developer controls.</div>
         </button>
       </nav>
+
+      <div className="mt-auto rounded-2xl border border-claude-border bg-white p-4 text-xs text-claude-secondary shadow-sm">
+        Tip: start with /help or /plan in the chat panel.
+      </div>
     </aside>
   )
 }

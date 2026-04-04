@@ -1,4 +1,5 @@
 import { LLMProvider } from './providers/base'
+import { LocalProvider } from './providers/local'
 import { OllamaProvider } from './providers/ollama'
 import { JanProvider } from './providers/jan'
 import { LMStudioProvider } from './providers/lmstudio'
@@ -13,8 +14,16 @@ export class QueryEngine {
   private activeProvider: LLMProvider | null = null
 
   async init() {
+    await this.registerLocalProvider()
     await this.autoDetectProviders()
     this.registerApiProviders()
+  }
+
+  private async registerLocalProvider() {
+    const local = new LocalProvider()
+    await local.connect()
+    this.providers.set(local.id, local)
+    this.activeProvider = local
   }
 
   async autoDetectProviders() {
@@ -51,6 +60,19 @@ export class QueryEngine {
     }
   }
 
+  async complete(messages: any[], options: any = {}) {
+    if (!this.activeProvider) throw new Error('No active LLM provider')
+
+    if (!this.activeProvider.connected) {
+      const localProvider = this.providers.get('local')
+      if (localProvider) {
+        return localProvider.complete(messages, options)
+      }
+    }
+
+    return this.activeProvider.complete(messages, options)
+  }
+
   async *stream(messages: any[], options: any = {}) {
     if (!this.activeProvider) throw new Error('No active LLM provider')
     yield* this.activeProvider.stream(messages, options)
@@ -61,8 +83,19 @@ export class QueryEngine {
       id,
       name: p.name,
       available: p.connected,
-      models: p.models
+      models: p.models,
+      active: this.activeProvider?.id === id
     }))
+  }
+
+  getActiveProvider() {
+    return this.activeProvider
+      ? {
+          id: this.activeProvider.id,
+          name: this.activeProvider.name,
+          models: this.activeProvider.models,
+        }
+      : null
   }
 
   selectProvider(id: string) {
