@@ -1,6 +1,6 @@
 import { defineConfig } from 'vite'
 import path from 'node:path'
-import electron from 'vite-plugin-electron/simple'
+import electron from 'vite-plugin-electron'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
@@ -8,18 +8,38 @@ export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
-    electron({
-      main: {
+    ...electron([
+      {
         entry: 'electron/main/index.ts',
         onstart(args) {
           args.startup()
         },
+        vite: {
+          build: {
+            outDir: 'dist-electron/main',
+            rollupOptions: {
+              output: {
+                entryFileNames: 'index.mjs',
+              },
+            },
+          },
+        },
       },
-      preload: {
-        input: path.join(__dirname, 'electron/preload/index.ts'),
+      {
+        entry: 'electron/preload/index.ts',
+        vite: {
+          build: {
+            outDir: 'dist-electron/preload',
+            codeSplitting: false,
+            rollupOptions: {
+              output: {
+                entryFileNames: 'index.mjs',
+              },
+            },
+          },
+        },
       },
-      renderer: {},
-    }),
+    ]),
   ],
   resolve: {
     alias: {
