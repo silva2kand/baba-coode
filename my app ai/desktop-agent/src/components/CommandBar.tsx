@@ -18,6 +18,7 @@ type CommandBarProps = {
 
 export function CommandBar({ activePanel, onNavigate, onSubmitCommand }: CommandBarProps) {
   const [value, setValue] = useState('')
+  const [panelJump, setPanelJump] = useState('')
 
   const submit = async (mode: 'prompt' | 'command') => {
     const trimmed = value.trim()
@@ -37,8 +38,31 @@ export function CommandBar({ activePanel, onNavigate, onSubmitCommand }: Command
 
   return (
     <section className="border-b border-claude-border bg-white/95 px-3 py-2 backdrop-blur">
-      <div className="mx-auto flex max-w-[1600px] flex-col gap-2">
+      <div className="mx-auto flex max-w-[1600px] flex-col gap-1.5">
         <form onSubmit={handleSubmit} className="flex items-center gap-2 rounded-xl border border-claude-border bg-stone-50 px-2 py-1.5 shadow-sm">
+          <label className="hidden items-center gap-1 rounded-md border border-claude-border bg-white px-2 py-1 text-[11px] text-claude-secondary md:flex">
+            <span className="font-semibold uppercase tracking-[0.12em]">Open</span>
+            <select
+              value={panelJump}
+              onChange={(event) => {
+                const nextPanel = event.target.value as WorkspacePanel
+                setPanelJump(nextPanel)
+                if (nextPanel) {
+                  onNavigate(nextPanel)
+                  setPanelJump('')
+                }
+              }}
+              className="bg-transparent text-[11px] font-medium text-claude-text outline-none"
+            >
+              <option value="">Surface</option>
+              {quickPanels.map((item) => (
+                <option key={item.panel} value={item.panel}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
           <input
             value={value}
             onChange={(event) => setValue(event.target.value)}
@@ -60,29 +84,12 @@ export function CommandBar({ activePanel, onNavigate, onSubmitCommand }: Command
             Run
           </button>
         </form>
+        <div className="flex items-center justify-between gap-3 text-[11px] text-claude-secondary">
+          <span>Open menu jumps to Tasks/Browser/Computer/Console/Settings without blocking chat.</span>
+          <span className="hidden lg:inline">Active surface: {activePanel}</span>
+        </div>
         <div className="text-[11px] text-claude-secondary">
           Send = prompt to chat. Run = slash command. Header Search = web/URL research.
-        </div>
-
-        <div className="flex items-center gap-1 overflow-x-auto pb-0.5">
-          {quickPanels.map((item) => (
-            <button
-              key={item.panel}
-              type="button"
-              onClick={() => onNavigate(item.panel)}
-              title={item.detail}
-              className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium transition ${
-                activePanel === item.panel
-                  ? 'border-claude-text bg-claude-text text-white'
-                  : 'border-claude-border bg-white text-claude-text hover:border-claude-text'
-              }`}
-            >
-              {item.label}
-            </button>
-          ))}
-          <span className="ml-auto hidden text-[11px] text-claude-secondary lg:inline">
-            Active surface: {activePanel}
-          </span>
         </div>
       </div>
     </section>

@@ -90,6 +90,16 @@ function App() {
     }
   }, [hydrate, initStore, refreshProviders])
 
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void queryEngine.reprobeProviders(() => {
+        refreshProviders()
+      })
+    }, 45_000)
+
+    return () => window.clearInterval(timer)
+  }, [refreshProviders])
+
   const fontSizeClass = ui.fontSize === 'sm' ? 'text-[13px]' : ui.fontSize === 'lg' ? 'text-[16px]' : 'text-[14px]'
   const shellClass = ui.theme === 'light' ? 'bg-white' : 'bg-claude-bg'
   const selectedArtifact = artifacts.find((artifact) => artifact.id === selectedArtifactId) ?? artifacts[0] ?? null

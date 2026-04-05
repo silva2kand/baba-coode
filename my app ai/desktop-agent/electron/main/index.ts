@@ -105,6 +105,40 @@ function stripHtml(html: string) {
     .trim()
 }
 
+function hasScheme(value: string) {
+  return /^[a-z][a-z0-9+.-]*:/i.test(value)
+}
+
+function normalizeHttpUrl(target: string) {
+  const trimmed = target.trim()
+  if (!trimmed) {
+    throw new Error('URL cannot be empty.')
+  }
+
+  const candidate = hasScheme(trimmed) ? trimmed : `https://${trimmed}`
+  const parsed = new URL(candidate)
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`Unsupported URL protocol: ${parsed.protocol}`)
+  }
+  return parsed.toString()
+}
+
+function normalizeExternalTarget(target: string) {
+  const trimmed = target.trim()
+  if (!trimmed) {
+    throw new Error('External target cannot be empty.')
+  }
+
+  const candidate = hasScheme(trimmed) ? trimmed : `https://${trimmed}`
+  const parsed = new URL(candidate)
+  const allowedProtocols = new Set(['http:', 'https:', 'mailto:', 'ms-outlook:', 'outlook:', 'file:'])
+  if (!allowedProtocols.has(parsed.protocol)) {
+    throw new Error(`Blocked external protocol: ${parsed.protocol}`)
+  }
+
+  return parsed.toString()
+}
+
 async function listDirectory(targetPath: string): Promise<DirectoryItem[]> {
   const resolvedPath = path.resolve(targetPath)
   const entries = await fs.readdir(resolvedPath, { withFileTypes: true })
@@ -120,7 +154,7 @@ async function listDirectory(targetPath: string): Promise<DirectoryItem[]> {
 
 
 async function fetchUrl(targetUrl: string) {
-  const normalized = /^https?:\/\//i.test(targetUrl) ? targetUrl : `https://${targetUrl}`
+  const normalized = normalizeHttpUrl(targetUrl)
   const response = await fetch(normalized)
   const contentType = response.headers.get('content-type') || 'unknown'
   const text = await response.text()
@@ -200,10 +234,7 @@ async function probeLocalProviders(): Promise<LocalProviderProbe[]> {
 
 
 async function openExternalTarget(target: string) {
-  const normalized = target.trim()
-  if (!normalized) {
-    throw new Error('External target cannot be empty.')
-  }
+  const normalized = normalizeExternalTarget(target)
 
   await shell.openExternal(normalized)
   return { ok: true, target: normalized }

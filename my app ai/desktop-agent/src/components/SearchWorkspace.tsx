@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useArtifactStore } from '../store/artifacts'
+import { useMemoryStore } from '../store/memory'
 import type { RuntimeEventInput } from '../store/runtime'
 import { useSearchStore } from '../store/search'
 import { useSettingsStore } from '../store/settings'
@@ -30,10 +31,13 @@ export function SearchWorkspace({ onUsePrompt, onRuntimeEvent, onArtifactCreated
   const { models, tools, privacy } = useSettingsStore()
   const { pendingRequest, clearPendingRequest } = useSearchStore()
   const { addResearchArtifact, selectArtifact } = useArtifactStore()
+  const addMemoryEntry = useMemoryStore((state) => state.addEntry)
   const [inputText, setInputText] = useState('https://example.com')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState<ResearchCommandResult | null>(null)
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(false)
+  const [autoRefreshMinutes, setAutoRefreshMinutes] = useState('30')
 
   const denyTools = useMemo(() => {
     const denied: string[] = []
@@ -43,7 +47,7 @@ export function SearchWorkspace({ onUsePrompt, onRuntimeEvent, onArtifactCreated
     return denied
   }, [privacy.disableExternalRequests.enabled, privacy.disableWebFetch.enabled, tools.browserResearch.available, tools.browserResearch.enabled, tools.webFetch.available, tools.webFetch.enabled])
 
-  const runResearch = async (nextInput?: string) => {
+  const runResearch = useCallback(async (nextInput?: string) => {
     const trimmed = (nextInput ?? inputText).trim()
     if (!trimmed) {
       setError('Enter a URL or query before running research.')
@@ -97,6 +101,12 @@ export function SearchWorkspace({ onUsePrompt, onRuntimeEvent, onArtifactCreated
       const artifact = toResearchArtifact(nextResult)
       addResearchArtifact(artifact)
       selectArtifact(artifact.id)
+      addMemoryEntry({
+        kind: 'runtime',
+        title: `Research: ${artifact.title}`,
+        content: `${artifact.summary}\n\nSource: ${artifact.sourceUrl}`,
+        sourceLabel: 'auto research memory',
+      })
       onRuntimeEvent({
         kind: 'research',
         status: 'success',
@@ -132,7 +142,7 @@ export function SearchWorkspace({ onUsePrompt, onRuntimeEvent, onArtifactCreated
     } finally {
       setLoading(false)
     }
-  }
+  }, [addMemoryEntry, addResearchArtifact, denyTools, inputText, models.reasoningModel, onArtifactCreated, onRuntimeEvent, selectArtifact])
 
   useEffect(() => {
     if (!pendingRequest) {
@@ -144,7 +154,26 @@ export function SearchWorkspace({ onUsePrompt, onRuntimeEvent, onArtifactCreated
       void runResearch(pendingRequest.query)
     }
     clearPendingRequest()
-  }, [clearPendingRequest, pendingRequest])
+  }, [clearPendingRequest, pendingRequest, runResearch])
+
+  useEffect(() => {
+    if (!autoRefreshEnabled) {
+      return
+    }
+
+    const minutes = Number(autoRefreshMinutes)
+    if (!Number.isFinite(minutes) || minutes < 1) {
+      return
+    }
+
+    const timer = window.setInterval(() => {
+      if (!loading) {
+        void runResearch(inputText)
+      }
+    }, minutes * 60_000)
+
+    return () => window.clearInterval(timer)
+  }, [autoRefreshEnabled, autoRefreshMinutes, inputText, loading, runResearch])
 
   return (
     <section className="h-full overflow-auto bg-[#fbf8f2] p-6">
@@ -171,6 +200,28 @@ export function SearchWorkspace({ onUsePrompt, onRuntimeEvent, onArtifactCreated
             </div>
             <div className="mt-3 text-xs text-claude-secondary">
               Reasoning model: {models.reasoningModel} · denied tools: {denyTools.length === 0 ? 'none' : denyTools.join(', ')}
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setAutoRefreshEnabled(!autoRefreshEnabled)}
+                className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${autoRefreshEnabled ? 'border-claude-text bg-claude-text text-white' : 'border-claude-border bg-white text-claude-text'}`}
+              >
+                {autoRefreshEnabled ? 'Auto research: ON' : 'Auto research: OFF'}
+              </button>
+              <label className="flex items-center gap-2 text-xs text-claude-secondary">
+                Every
+                <select
+                  value={autoRefreshMinutes}
+                  onChange={(event) => setAutoRefreshMinutes(event.target.value)}
+                  className="rounded-lg border border-claude-border bg-white px-2 py-1 text-xs text-claude-text outline-none"
+                >
+                  <option value="5">5 min</option>
+                  <option value="15">15 min</option>
+                  <option value="30">30 min</option>
+                  <option value="60">60 min</option>
+                </select>
+              </label>
             </div>
           </div>
         </div>
