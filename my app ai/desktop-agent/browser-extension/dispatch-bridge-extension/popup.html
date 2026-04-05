@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SILVA Dispatch</title>
+    <style>
+      body {
+        margin: 0;
+        width: 360px;
+        font-family: "Segoe UI", sans-serif;
+        background: #f7f3ea;
+        color: #1f2430;
+      }
+
+      main {
+        padding: 16px;
+      }
+
+      h1 {
+        margin: 0 0 12px;
+        font-size: 18px;
+      }
+
+      label {
+        display: block;
+        margin-bottom: 10px;
+        font-size: 12px;
+        font-weight: 600;
+        color: #5c6572;
+      }
+
+      input,
+      select,
+      textarea,
+      button {
+        width: 100%;
+        font: inherit;
+      }
+
+      input,
+      select,
+      textarea {
+        margin-top: 6px;
+        padding: 10px 12px;
+        border: 1px solid #ddd4c5;
+        border-radius: 12px;
+        background: #fffdfa;
+      }
+
+      textarea {
+        min-height: 120px;
+        resize: vertical;
+      }
+
+      .row {
+        display: flex;
+        gap: 8px;
+      }
+
+      button {
+        border: 0;
+        border-radius: 12px;
+        padding: 10px 12px;
+        cursor: pointer;
+      }
+
+      .primary {
+        background: #20425b;
+        color: white;
+      }
+
+      .secondary {
+        background: #ece6da;
+        color: #1f2430;
+      }
+
+      #status {
+        margin-top: 12px;
+        padding: 10px 12px;
+        border-radius: 12px;
+        background: #ece6da;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>SILVA Dispatch Bridge</h1>
+      <label>
+        Dispatch host
+        <input id="host" value="127.0.0.1" />
+      </label>
+      <label>
+        Dispatch port
+        <input id="port" value="47831" />
+      </label>
+      <label>
+        Action
+        <select id="action">
+          <option value="summarize">Summarize page</option>
+          <option value="rewrite">Rewrite selected text</option>
+          <option value="extract_tasks">Extract tasks and next steps</option>
+          <option value="analyze">Analyze page deeply</option>
+          <option value="custom">Custom dispatch prompt</option>
+        </select>
+      </label>
+      <label>
+        Title
+        <input id="title" placeholder="Send current page to SILVA" />
+      </label>
+      <label>
+        Prompt
+        <textarea id="prompt"></textarea>
+      </label>
+      <div class="row">
+        <button id="fill" class="secondary" type="button">Use current tab</button>
+        <button id="selection" class="secondary" type="button">Use selection</button>
+        <button id="send" class="primary" type="button">Send</button>
+      </div>
+      <div id="status">Ready.</div>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+  </html>

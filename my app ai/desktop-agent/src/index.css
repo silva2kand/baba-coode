@@ -28,12 +28,41 @@ body,
 
 body {
   min-width: 320px;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+#root,
+#root * {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.app-drag-region {
+  -webkit-app-region: drag;
+}
+
+.app-drag-region button,
+.app-drag-region input,
+.app-drag-region textarea,
+.app-drag-region select,
+.app-drag-region option,
+.app-drag-region a,
+.app-drag-region label,
+.app-drag-region [role='button'],
+.app-no-drag {
+  -webkit-app-region: no-drag;
 }
 
 button,
 input,
-textarea {
+textarea,
+select,
+label,
+[role='button'] {
   font: inherit;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 textarea {

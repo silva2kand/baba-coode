@@ -1,31 +1,13 @@
-import { LLMProvider } from './base'
+import { OpenAICompatibleLocalProvider } from './openai-compatible-local'
 
-export class JanProvider extends LLMProvider {
-  name = 'Jan'
-  id = 'jan'
-  models = ['jan-local']
-
-  async isAvailable(): Promise<boolean> {
-    return false
-  }
-
-  async connect(): Promise<void> {
-    this.connected = false
-  }
-
-  async disconnect(): Promise<void> {
-    this.connected = false
-  }
-
-  async listModels(): Promise<string[]> {
-    return this.models
-  }
-
-  async *stream(_messages: unknown[], _options: unknown = {}): AsyncGenerator<string, void, unknown> {
-    yield 'Jan provider is not connected.'
-  }
-
-  async complete(_messages: unknown[], _options: unknown = {}): Promise<string> {
-    return 'Jan provider is not connected.'
+export class JanProvider extends OpenAICompatibleLocalProvider {
+  constructor() {
+    super({
+      id: 'jan',
+      name: 'Jan',
+      baseUrl: 'http://localhost:1337/v1',
+      defaultModels: ['jan-local'],
+      offlineDetail: 'Checking local Jan service.',
+    })
   }
 }

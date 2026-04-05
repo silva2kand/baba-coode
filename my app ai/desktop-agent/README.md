@@ -1,5 +1,12 @@
 # React + TypeScript + Vite
 
+## SILVA Desktop Agent additions
+
+- Dispatch sender page: `public/dispatch-sender.html`
+- Unpacked browser bridge extension: `browser-extension/dispatch-bridge-extension`
+- Desktop app dispatch server: start it from the Dispatch workspace, then send JSON payloads with `title` and `prompt` over `ws://127.0.0.1:47831`
+- Browser extension flow: load the unpacked extension in Chrome/Edge, click the action popup, then send the current tab into the desktop Dispatch queue
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:

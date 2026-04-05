@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SILVA Dispatch Sender</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f7f3ea;
+        --card: #ffffff;
+        --ink: #1f2430;
+        --muted: #667085;
+        --line: #ddd4c5;
+        --accent: #20425b;
+        --accent-strong: #102b3d;
+        --success: #0f9f6e;
+        --danger: #c23b3b;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Segoe UI", "Inter", sans-serif;
+        background: radial-gradient(circle at top, #ffffff 0%, var(--bg) 48%, #efe7d8 100%);
+        color: var(--ink);
+      }
+
+      .shell {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 24px;
+      }
+
+      .hero,
+      .panel {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        box-shadow: 0 8px 24px rgba(31, 36, 48, 0.06);
+      }
+
+      .hero {
+        padding: 24px;
+        background: linear-gradient(145deg, #202735, #274158);
+        color: #fff;
+      }
+
+      .hero p,
+      .muted {
+        color: rgba(255, 255, 255, 0.75);
+      }
+
+      .grid {
+        display: grid;
+        gap: 16px;
+        margin-top: 16px;
+      }
+
+      @media (min-width: 900px) {
+        .grid {
+          grid-template-columns: 1.15fr 0.85fr;
+        }
+      }
+
+      .panel {
+        padding: 20px;
+      }
+
+      .field,
+      textarea,
+      input,
+      select,
+      button {
+        width: 100%;
+        font: inherit;
+      }
+
+      input,
+      textarea,
+      select {
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 12px 14px;
+        background: #faf8f2;
+        color: var(--ink);
+      }
+
+      textarea {
+        min-height: 160px;
+        resize: vertical;
+      }
+
+      button {
+        border: 0;
+        border-radius: 16px;
+        padding: 12px 16px;
+        cursor: pointer;
+      }
+
+      .primary {
+        background: var(--accent);
+        color: #fff;
+      }
+
+      .secondary {
+        background: #eef2f5;
+        color: var(--ink);
+      }
+
+      .row {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .row > * {
+        flex: 1 1 180px;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.12);
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .status {
+        margin-top: 14px;
+        padding: 12px 14px;
+        border-radius: 16px;
+        background: #f5f2ea;
+        color: var(--muted);
+      }
+
+      .status.success {
+        background: rgba(15, 159, 110, 0.09);
+        color: var(--success);
+      }
+
+      .status.error {
+        background: rgba(194, 59, 59, 0.09);
+        color: var(--danger);
+      }
+
+      .preset-grid {
+        display: grid;
+        gap: 10px;
+      }
+
+      .preset {
+        text-align: left;
+        border: 1px solid var(--line);
+        background: #faf8f2;
+      }
+
+      .preset strong {
+        display: block;
+        margin-bottom: 6px;
+      }
+
+      code {
+        font-family: Consolas, "SFMono-Regular", monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <div class="badge">SILVA Dispatch Sender</div>
+        <h1>Send work from any browser into the desktop agent</h1>
+        <p>Connect to the local Dispatch WebSocket server running in the desktop app and queue a real background task.</p>
+      </section>
+
+      <div class="grid">
+        <section class="panel">
+          <h2>Queue task</h2>
+          <div class="row">
+            <label class="field">
+              <div>Host</div>
+              <input id="host" value="127.0.0.1" />
+            </label>
+            <label class="field">
+              <div>Port</div>
+              <input id="port" value="47831" />
+            </label>
+          </div>
+
+          <label class="field">
+            <div>Title</div>
+            <input id="title" placeholder="Summarize today's WhatsApp chats" />
+          </label>
+
+          <label class="field">
+            <div>Prompt</div>
+            <textarea id="prompt" placeholder="Describe the work the desktop agent should do."></textarea>
+          </label>
+
+          <div class="row">
+            <label class="field">
+              <div>Source label</div>
+              <input id="source" value="browser-sender" />
+            </label>
+            <label class="field">
+              <div>Tags</div>
+              <input id="tags" placeholder="chrome, whatsapp, research" />
+            </label>
+          </div>
+
+          <div class="row">
+            <button id="connect" class="secondary" type="button">Test connection</button>
+            <button id="send" class="primary" type="button">Send to Dispatch</button>
+          </div>
+
+          <div id="status" class="status">Waiting for connection.</div>
+        </section>
+
+        <section class="panel">
+          <h2>Starter workflows</h2>
+          <div class="preset-grid">
+            <button class="preset" type="button" data-title="WhatsApp morning triage" data-prompt="Open WhatsApp Web or the desktop app, review unread conversations from today, summarize action items, and draft suggested replies for the urgent threads.">
+              <strong>WhatsApp morning triage</strong>
+              Review unread chats, summarize action items, and draft responses.
+            </button>
+            <button class="preset" type="button" data-title="Chrome page to task" data-prompt="Open the browser, inspect the currently relevant page, extract the important content, and turn it into a concise task list with next actions.">
+              <strong>Chrome page to task</strong>
+              Turn a page context into a concrete work list.
+            </button>
+            <button class="preset" type="button" data-title="Desktop app follow-up" data-prompt="Open the relevant Windows app, gather the information needed for follow-up, and prepare the summary plus the next three actions.">
+              <strong>Desktop app follow-up</strong>
+              Continue a workflow inside native Windows apps.
+            </button>
+          </div>
+
+          <div class="status" style="margin-top:16px;">
+            JSON protocol: <code>{"title":"...","prompt":"..."}</code>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <script>
+      const statusEl = document.getElementById('status');
+      const titleEl = document.getElementById('title');
+      const promptEl = document.getElementById('prompt');
+
+      function endpoint() {
+        const host = document.getElementById('host').value.trim() || '127.0.0.1';
+        const port = document.getElementById('port').value.trim() || '47831';
+        return `ws://${host}:${port}`;
+      }
+
+      function setStatus(message, type = '') {
+        statusEl.textContent = message;
+        statusEl.className = `status ${type}`.trim();
+      }
+
+      function connectOnce(payload) {
+        return new Promise((resolve, reject) => {
+          const socket = new WebSocket(endpoint());
+          let settled = false;
+
+          socket.addEventListener('open', () => {
+            if (!payload) {
+              settled = true;
+              socket.close();
+              resolve({ ok: true, detail: 'Connected successfully.' });
+              return;
+            }
+            socket.send(JSON.stringify(payload));
+          });
+
+          socket.addEventListener('message', (event) => {
+            if (settled) return;
+            settled = true;
+            socket.close();
+            try {
+              resolve(JSON.parse(event.data));
+            } catch {
+              resolve({ ok: true, detail: event.data });
+            }
+          });
+
+          socket.addEventListener('error', () => {
+            if (settled) return;
+            settled = true;
+            reject(new Error('Unable to connect to Dispatch. Make sure the desktop app server is running.'));
+          });
+        });
+      }
+
+      document.getElementById('connect').addEventListener('click', async () => {
+        setStatus('Connecting...');
+        try {
+          const result = await connectOnce(null);
+          setStatus(result.detail || 'Connected successfully.', 'success');
+        } catch (error) {
+          setStatus(error.message, 'error');
+        }
+      });
+
+      document.getElementById('send').addEventListener('click', async () => {
+        const title = titleEl.value.trim();
+        const prompt = promptEl.value.trim();
+        if (!title || !prompt) {
+          setStatus('Title and prompt are required.', 'error');
+          return;
+        }
+
+        setStatus('Sending to Dispatch...');
+        try {
+          const result = await connectOnce({
+            title,
+            prompt,
+            source: document.getElementById('source').value.trim() || 'browser-sender',
+            tags: document.getElementById('tags').value.split(',').map((value) => value.trim()).filter(Boolean),
+          });
+          if (result.ok === false) {
+            throw new Error(result.error || 'Dispatch rejected the request.');
+          }
+          setStatus(`Queued: ${result.task ? result.task.title : title}`, 'success');
+        } catch (error) {
+          setStatus(error.message, 'error');
+        }
+      });
+
+      document.querySelectorAll('[data-title]').forEach((button) => {
+        button.addEventListener('click', () => {
+          titleEl.value = button.dataset.title || '';
+          promptEl.value = button.dataset.prompt || '';
+          setStatus(`Loaded preset: ${button.dataset.title}`);
+        });
+      });
+    </script>
+  </body>
+  </html>

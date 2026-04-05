@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "SILVA Dispatch Bridge",
+  "version": "0.1.0",
+  "description": "Send the current browser context into the SILVA desktop Dispatch queue.",
+  "permissions": ["tabs", "storage", "scripting", "activeTab"],
+  "host_permissions": ["<all_urls>"],
+  "action": {
+    "default_title": "Send to SILVA Dispatch",
+    "default_popup": "popup.html"
+  }
+}

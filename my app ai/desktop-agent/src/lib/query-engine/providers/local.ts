@@ -143,6 +143,8 @@ export class LocalProvider extends LLMProvider {
   name = 'Offline Assistant'
   id = 'local'
   models = ['local-guidance']
+  kind = 'offline' as const
+  statusDetail = 'Always available offline fallback inside the desktop shell.'
 
   async isAvailable(): Promise<boolean> {
     return true

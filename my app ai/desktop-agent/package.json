@@ -16,12 +16,25 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "test:bridge": "vitest run electron/main/research-bridge.test.ts",
     "electron:dev": "vite --mode electron",
     "electron:build": "tsc && vite build && electron-builder"
+  },
+  "build": {
+    "appId": "com.silva.commandcenter",
+    "productName": "SILVA Command Center",
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "createDesktopShortcut": "always",
+      "shortcutName": "SILVA Command Center"
+    }
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
     "@huggingface/inference": "^4.13.15",
+    "@nut-tree-fork/nut-js": "^4.2.6",
     "@radix-ui/react-icons": "^1.3.2",
     "@radix-ui/themes": "^3.3.0",
     "@tailwindcss/vite": "^4.2.2",
@@ -30,11 +43,13 @@
     "electron": "^41.1.1",
     "electron-builder": "^26.8.1",
     "openai": "^6.33.0",
+    "playwright": "^1.59.1",
     "postcss": "^8.5.8",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-router-dom": "^7.14.0",
     "tailwindcss": "^4.2.2",
+    "tesseract.js": "^7.0.0",
     "vite-plugin-electron": "^0.29.1",
     "vite-plugin-electron-renderer": "^0.14.6",
     "ws": "^8.20.0",
@@ -53,6 +68,7 @@
     "globals": "^17.4.0",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.57.0",
-    "vite": "^8.0.1"
+    "vite": "^8.0.1",
+    "vitest": "^4.1.2"
   }
 }

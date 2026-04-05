@@ -13,10 +13,11 @@ export class QueryEngine {
   private providers: Map<string, LLMProvider> = new Map()
   private activeProvider: LLMProvider | null = null
 
-  async init() {
+  async init(onProvidersChanged?: () => void) {
     await this.registerLocalProvider()
-    await this.autoDetectProviders()
     this.registerApiProviders()
+    onProvidersChanged?.()
+    void this.autoDetectProviders(onProvidersChanged)
   }
 
   private async registerLocalProvider() {
@@ -26,23 +27,58 @@ export class QueryEngine {
     this.activeProvider = local
   }
 
-  async autoDetectProviders() {
+  async autoDetectProviders(onProvidersChanged?: () => void) {
     const detectors = [
       { name: 'ollama', provider: OllamaProvider },
       { name: 'jan', provider: JanProvider },
       { name: 'lmstudio', provider: LMStudioProvider }
     ]
 
-    for (const detector of detectors) {
+    const instances = detectors.map(({ provider }) => new provider())
+    for (const instance of instances) {
+      this.providers.set(instance.id, instance)
+    }
+    onProvidersChanged?.()
+
+    const electronProbes = typeof window !== 'undefined' && window.electronAPI?.getLocalProviders
+      ? await window.electronAPI.getLocalProviders()
+      : []
+    const probeMap = new Map(electronProbes.map((probe) => [probe.id, probe]))
+
+    for (const instance of instances) {
       try {
-        const instance = new detector.provider()
+        const probe = probeMap.get(instance.id)
+        if (probe) {
+          instance.models = probe.models.length ? probe.models : instance.models
+          instance.statusDetail = probe.detail
+          instance.connected = probe.available
+          if (probe.available) {
+            await instance.connect()
+            if (!this.activeProvider || this.activeProvider.id === 'local') {
+              this.activeProvider = instance
+            }
+          }
+          onProvidersChanged?.()
+          continue
+        }
+
         if (await instance.isAvailable()) {
           await instance.connect()
-          this.providers.set(detector.name, instance)
-          if (!this.activeProvider) this.activeProvider = instance
+          instance.statusDetail = `${instance.name} detected locally.`
+          if (!this.activeProvider || this.activeProvider.id === 'local') this.activeProvider = instance
+        } else {
+          instance.statusDetail = `${instance.name} was not detected on this machine.`
         }
-      } catch {}
+      } catch {
+        instance.connected = false
+        instance.statusDetail = `${instance.name} probe failed during detection.`
+      }
+      onProvidersChanged?.()
     }
+  }
+
+  async reprobeProviders(onProvidersChanged?: () => void) {
+    await this.autoDetectProviders(onProvidersChanged)
   }
 
   registerApiProviders() {
@@ -56,6 +92,7 @@ export class QueryEngine {
 
     for (const api of apiProviders) {
       const instance = new api.provider()
+      instance.statusDetail = `${instance.name} is scaffolded, but API connection is not configured in this build yet.`
       this.providers.set(api.name, instance)
     }
   }
@@ -70,7 +107,21 @@ export class QueryEngine {
       }
     }
 
-    return this.activeProvider.complete(messages, options)
+    try {
+      return await this.activeProvider.complete(messages, options)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Provider request failed.'
+      this.activeProvider.connected = false
+      this.activeProvider.statusDetail = `${this.activeProvider.name} request failed. Falling back to offline assistant. (${message})`
+
+      const localProvider = this.providers.get('local')
+      if (localProvider && localProvider.id !== this.activeProvider.id) {
+        this.activeProvider = localProvider
+        return localProvider.complete(messages, options)
+      }
+
+      throw error
+    }
   }
 
   async *stream(messages: any[], options: any = {}) {
@@ -84,7 +135,10 @@ export class QueryEngine {
       name: p.name,
       available: p.connected,
       models: p.models,
-      active: this.activeProvider?.id === id
+      active: this.activeProvider?.id === id,
+      kind: p.kind,
+      status: (this.activeProvider?.id === id ? 'active' : p.connected ? 'ready' : 'offline') as 'active' | 'ready' | 'offline',
+      detail: p.statusDetail,
     }))
   }
 

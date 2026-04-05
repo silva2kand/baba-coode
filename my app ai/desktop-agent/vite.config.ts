@@ -12,12 +12,23 @@ export default defineConfig({
       {
         entry: 'electron/main/index.ts',
         onstart(args) {
+          delete process.env.ELECTRON_RUN_AS_NODE
           args.startup()
         },
         vite: {
           build: {
             outDir: 'dist-electron/main',
             rollupOptions: {
+              external: [
+                'playwright',
+                'playwright-core',
+                'chromium-bidi',
+                'chromium-bidi/lib/cjs/bidiMapper/BidiMapper',
+                'chromium-bidi/lib/cjs/cdp/CdpConnection',
+                '@nut-tree-fork/nut-js',
+                'punycode',
+                'ws',
+              ],
               output: {
                 entryFileNames: 'index.mjs',
               },
@@ -30,6 +41,8 @@ export default defineConfig({
         vite: {
           build: {
             outDir: 'dist-electron/preload',
+            // vite-plugin-electron still types this build block narrowly, but Vite 8 accepts codeSplitting here.
+            // @ts-expect-error Supported at runtime; plugin typings have not caught up yet.
             codeSplitting: false,
             rollupOptions: {
               output: {
