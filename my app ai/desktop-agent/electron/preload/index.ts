@@ -34,7 +34,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openExternal: (target: string) => ipcRenderer.invoke('tool:openExternal', target),
   listDir: (path: string) => ipcRenderer.invoke('tool:listDir', path),
   webFetch: (url: string) => ipcRenderer.invoke('tool:webFetch', url),
+  connectorTestRequest: (request: { url: string; method?: 'GET' | 'POST'; token?: string; headers?: Record<string, string>; body?: string }) => ipcRenderer.invoke('connector:testRequest', request),
   runResearch: (request: { inputText: string; model?: string; denyTools?: string[]; denyPrefixes?: string[] }) => ipcRenderer.invoke('research:run', request),
+  localVoiceTts: (request: { piperPath: string; modelPath: string; text: string; outputPath?: string }) => ipcRenderer.invoke('voice:localTts', request),
+  localVoiceTranscribe: (request: { whisperPath: string; audioPath: string; model?: string; outputDir?: string }) => ipcRenderer.invoke('voice:localTranscribe', request),
 
   // ─── Provider Management ────────────────────────────────
   getLocalProviders: () => ipcRenderer.invoke('providers:list'),

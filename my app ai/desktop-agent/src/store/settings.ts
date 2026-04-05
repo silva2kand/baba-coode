@@ -194,10 +194,10 @@ const defaultSettings: SettingsSnapshot = {
     autoTranscribe: false,
   },
   developer: {
-    codingConsole: { enabled: false, available: false, blockedReason: 'A dedicated coding console toggle is not wired separately yet.' },
-    toolLogs: { enabled: false, available: false, blockedReason: 'Detailed tool trace toggles are not wired separately yet.' },
-    agentTraces: { enabled: false, available: false, blockedReason: 'Detailed agent routing traces are not exposed separately yet.' },
-    advancedRoutingEditor: { enabled: false, available: false, blockedReason: 'Advanced routing editor UI is not implemented yet.' },
+    codingConsole: { enabled: true, available: true },
+    toolLogs: { enabled: true, available: true },
+    agentTraces: { enabled: true, available: true },
+    advancedRoutingEditor: { enabled: true, available: true },
   },
 }
 

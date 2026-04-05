@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useArtifactStore } from '../store/artifacts'
+import { useMemoryStore } from '../store/memory'
 import type { RuntimeEventInput } from '../store/runtime'
 import { useSettingsStore } from '../store/settings'
+import { parseWhatsAppExport } from '../lib/whatsapp-parser'
 import { toFileArtifact, toWebArtifact } from '../types/research'
 
 const DEFAULT_PATH = 'c:\\Users\\Silva\\WORKSPACE\\my app ai'
@@ -37,6 +39,7 @@ type ToolsWorkspaceProps = {
 export function ToolsWorkspace({ onUsePrompt, onRuntimeEvent, onArtifactCreated }: ToolsWorkspaceProps) {
   const { tools, privacy } = useSettingsStore()
   const { addArtifact, selectArtifact } = useArtifactStore()
+  const addMemoryEntry = useMemoryStore((state) => state.addEntry)
   const [directoryPath, setDirectoryPath] = useState(DEFAULT_PATH)
   const [directoryItems, setDirectoryItems] = useState<DirectoryItem[]>([])
   const [directoryError, setDirectoryError] = useState('')
@@ -46,6 +49,8 @@ export function ToolsWorkspace({ onUsePrompt, onRuntimeEvent, onArtifactCreated 
   const [webError, setWebError] = useState('')
   const [loadingDir, setLoadingDir] = useState(false)
   const [loadingWeb, setLoadingWeb] = useState(false)
+  const [whatsAppPath, setWhatsAppPath] = useState('')
+  const [whatsAppSummary, setWhatsAppSummary] = useState('')
 
   const saveFileArtifact = () => {
     if (!selectedFile) {
@@ -187,6 +192,69 @@ export function ToolsWorkspace({ onUsePrompt, onRuntimeEvent, onArtifactCreated 
       })
     } finally {
       setLoadingWeb(false)
+    }
+  }
+
+  const ingestWhatsAppExport = async () => {
+    const targetPath = whatsAppPath.trim()
+    if (!targetPath) {
+      setDirectoryError('Enter a WhatsApp export text file path first.')
+      return
+    }
+
+    try {
+      const result = await window.electronAPI.readFile(targetPath)
+      const parsed = parseWhatsAppExport(result.content)
+      const participants = parsed.participants.slice(0, 8).map((item) => `${item.name} (${item.count})`).join(', ')
+      const actions = parsed.actionItems.slice(0, 8).join('\n- ')
+      const summary = [
+        `Total messages: ${parsed.totalMessages}`,
+        `Participants: ${participants || 'unknown'}`,
+        '',
+        'Recent sample:',
+        ...parsed.sample.slice(-8).map((message) => `- [${message.timestamp}] ${message.sender}: ${message.text}`),
+        '',
+        'Action-like lines:',
+        actions ? `- ${actions}` : '- none detected',
+      ].join('\n')
+
+      setWhatsAppSummary(summary)
+      addMemoryEntry({
+        kind: 'runtime',
+        title: `WhatsApp ingestion · ${result.path.split(/[/\\]/).pop() || 'chat export'}`,
+        content: summary,
+        sourceLabel: 'whatsapp-export',
+      })
+
+      const artifact = toFileArtifact({
+        path: result.path,
+        size: result.size,
+        content: summary,
+        truncated: false,
+      })
+      addArtifact(artifact)
+      selectArtifact(artifact.id)
+      onArtifactCreated(artifact.title, `Saved WhatsApp ingestion summary from ${result.path}.`)
+
+      onRuntimeEvent({
+        kind: 'tool',
+        status: 'success',
+        title: 'WhatsApp export ingested',
+        detail: `${result.path}\n${parsed.totalMessages} messages parsed.`,
+        panel: 'tools',
+        source: 'tools-workspace',
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to ingest WhatsApp export.'
+      setDirectoryError(message)
+      onRuntimeEvent({
+        kind: 'tool',
+        status: 'error',
+        title: 'WhatsApp ingestion failed',
+        detail: `${targetPath}\n${message}`,
+        panel: 'tools',
+        source: 'tools-workspace',
+      })
     }
   }
 
@@ -364,6 +432,50 @@ export function ToolsWorkspace({ onUsePrompt, onRuntimeEvent, onArtifactCreated 
             </div>
           </section>
         </div>
+
+        <section className="rounded-3xl border border-claude-border bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-[0.18em] text-claude-secondary">WhatsApp export ingestion</div>
+              <div className="mt-1 text-sm text-claude-secondary">Load a WhatsApp exported chat `.txt` file and turn it into structured memory/artifact context.</div>
+            </div>
+            <button type="button" onClick={() => void ingestWhatsAppExport()} className="rounded-2xl bg-claude-text px-4 py-2 text-sm font-medium text-white">
+              Import
+            </button>
+          </div>
+
+          <div className="mt-3 flex gap-2">
+            <input
+              value={whatsAppPath}
+              onChange={(event) => setWhatsAppPath(event.target.value)}
+              placeholder="C:\\path\\to\\WhatsApp Chat with ....txt"
+              className="flex-1 rounded-2xl border border-claude-border bg-stone-50 px-3 py-2 text-sm outline-none"
+            />
+            <button type="button" onClick={() => void ingestWhatsAppExport()} className="rounded-2xl border border-claude-border px-4 py-2 text-sm font-medium text-claude-text">
+              Parse
+            </button>
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-claude-border bg-stone-50 p-4">
+            {whatsAppSummary ? (
+              <>
+                <div className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-claude-secondary">Parsed summary</div>
+                <pre className="max-h-[20rem] overflow-auto whitespace-pre-wrap text-xs text-claude-text">{whatsAppSummary}</pre>
+                <div className="mt-3 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onUsePrompt(`Use this WhatsApp ingestion summary:\n\n${whatsAppSummary}`)}
+                    className="rounded-full border border-claude-border px-3 py-1.5 text-xs font-medium text-claude-text"
+                  >
+                    Send to chat
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="text-sm text-claude-secondary">Import a WhatsApp export text file to generate structured summary here.</div>
+            )}
+          </div>
+        </section>
       </div>
     </section>
   )

@@ -141,7 +141,7 @@ export function ChatWindow({ onSubmitMessage, onArtifactCreated, onNavigate }: C
   }
 
   useEffect(() => {
-    if (!voice.enabled || !('speechSynthesis' in window)) {
+    if (!voice.enabled) {
       return
     }
 
@@ -150,13 +150,28 @@ export function ChatWindow({ onSubmitMessage, onArtifactCreated, onNavigate }: C
       return
     }
 
-    const utterance = new SpeechSynthesisUtterance(lastAssistantMessage.content)
-    utterance.rate = 1
-    utterance.pitch = 1
-    window.speechSynthesis.cancel()
-    window.speechSynthesis.speak(utterance)
+    if (voice.engine === 'local-whisper-piper') {
+      if (!voice.piperPath.trim() || !voice.piperModelPath.trim()) {
+        setVoiceStatus('Local voice is enabled, but Piper path/model are missing in Settings > Voice.')
+        return
+      }
+      void window.electronAPI.localVoiceTts({
+        piperPath: voice.piperPath,
+        modelPath: voice.piperModelPath,
+        text: lastAssistantMessage.content,
+      }).catch((error) => {
+        setVoiceStatus(error instanceof Error ? error.message : 'Local Piper playback failed.')
+      })
+    } else if ('speechSynthesis' in window) {
+      const utterance = new SpeechSynthesisUtterance(lastAssistantMessage.content)
+      utterance.rate = 1
+      utterance.pitch = 1
+      window.speechSynthesis.cancel()
+      window.speechSynthesis.speak(utterance)
+    }
+
     lastSpokenMessageIdRef.current = lastAssistantMessage.id
-  }, [messages, voice.enabled])
+  }, [messages, voice.enabled, voice.engine, voice.piperModelPath, voice.piperPath])
 
   useEffect(
     () => () => {

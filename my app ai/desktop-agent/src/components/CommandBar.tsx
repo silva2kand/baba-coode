@@ -38,9 +38,9 @@ export function CommandBar({ activePanel, onNavigate, onSubmitCommand }: Command
 
   return (
     <section className="border-b border-claude-border bg-white/95 px-3 py-2 backdrop-blur">
-      <div className="mx-auto flex max-w-[1600px] flex-col gap-1.5">
+      <div className="mx-auto flex max-w-[1600px] flex-col gap-1">
         <form onSubmit={handleSubmit} className="flex items-center gap-2 rounded-xl border border-claude-border bg-stone-50 px-2 py-1.5 shadow-sm">
-          <label className="hidden items-center gap-1 rounded-md border border-claude-border bg-white px-2 py-1 text-[11px] text-claude-secondary md:flex">
+          <label className="flex items-center gap-1 rounded-md border border-claude-border bg-white px-2 py-1 text-[11px] text-claude-secondary">
             <span className="font-semibold uppercase tracking-[0.12em]">Open</span>
             <select
               value={panelJump}
@@ -85,11 +85,8 @@ export function CommandBar({ activePanel, onNavigate, onSubmitCommand }: Command
           </button>
         </form>
         <div className="flex items-center justify-between gap-3 text-[11px] text-claude-secondary">
-          <span>Open menu jumps to Tasks/Browser/Computer/Console/Settings without blocking chat.</span>
+          <span>Open menu jumps to Tasks/Browser/Computer/Console/Settings as dropdown navigation.</span>
           <span className="hidden lg:inline">Active surface: {activePanel}</span>
-        </div>
-        <div className="text-[11px] text-claude-secondary">
-          Send = prompt to chat. Run = slash command. Header Search = web/URL research.
         </div>
       </div>
     </section>

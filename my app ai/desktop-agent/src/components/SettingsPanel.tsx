@@ -212,6 +212,13 @@ export function SettingsPanel({ onPreviewFocus }: SettingsPanelProps) {
   const [providerProbeLoading, setProviderProbeLoading] = useState(false)
   const [providerDrafts, setProviderDrafts] = useState<ProviderDraftMap>({})
   const [providerActionStatus, setProviderActionStatus] = useState<Record<string, string>>({})
+  const [voiceSampleText, setVoiceSampleText] = useState('Hello from SILVA local Piper voice.')
+  const [voiceOutputPath, setVoiceOutputPath] = useState('')
+  const [voiceInputAudioPath, setVoiceInputAudioPath] = useState('')
+  const [voiceWhisperModel, setVoiceWhisperModel] = useState('base')
+  const [voiceTestStatus, setVoiceTestStatus] = useState('')
+  const [voiceTranscript, setVoiceTranscript] = useState('')
+  const [voiceBusy, setVoiceBusy] = useState(false)
   const { providers, activeProviderId, setActiveProvider, probeProviders, connectProvider, disconnectProvider, getProviderConfig } = useChatStore()
   const {
     models,
@@ -623,6 +630,92 @@ export function SettingsPanel({ onPreviewFocus }: SettingsPanelProps) {
                     <input value={voice.piperModelPath} onChange={(event) => setVoiceSetting('piperModelPath', event.target.value)} placeholder="C:\\tools\\piper\\en_US-lessac-medium.onnx" className="rounded-xl border border-claude-border bg-white px-3 py-2 text-sm outline-none" />
                   </label>
                   <BooleanSelectRow label="Auto transcribe mic input" value={voice.autoTranscribe} onChange={(value) => setVoiceSetting('autoTranscribe', value)} />
+                </div>
+
+                <div className="mt-4 rounded-2xl border border-claude-border bg-stone-50 p-4">
+                  <div className="text-sm font-semibold text-claude-text">Local Whisper/Piper test console</div>
+                  <div className="mt-2 text-xs text-claude-secondary">
+                    Use this to verify local executables and model paths.
+                  </div>
+
+                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                    <label className="flex flex-col gap-2 text-xs text-claude-secondary">
+                      <span>Sample text for Piper</span>
+                      <input value={voiceSampleText} onChange={(event) => setVoiceSampleText(event.target.value)} className="rounded-xl border border-claude-border bg-white px-3 py-2 text-sm text-claude-text outline-none" />
+                    </label>
+                    <label className="flex flex-col gap-2 text-xs text-claude-secondary">
+                      <span>Output WAV path (optional)</span>
+                      <input value={voiceOutputPath} onChange={(event) => setVoiceOutputPath(event.target.value)} placeholder="C:\\temp\\silva-voice.wav" className="rounded-xl border border-claude-border bg-white px-3 py-2 text-sm text-claude-text outline-none" />
+                    </label>
+                    <label className="flex flex-col gap-2 text-xs text-claude-secondary">
+                      <span>Audio file path for Whisper</span>
+                      <input value={voiceInputAudioPath} onChange={(event) => setVoiceInputAudioPath(event.target.value)} placeholder="C:\\temp\\speech.wav" className="rounded-xl border border-claude-border bg-white px-3 py-2 text-sm text-claude-text outline-none" />
+                    </label>
+                    <label className="flex flex-col gap-2 text-xs text-claude-secondary">
+                      <span>Whisper model</span>
+                      <input value={voiceWhisperModel} onChange={(event) => setVoiceWhisperModel(event.target.value)} placeholder="base" className="rounded-xl border border-claude-border bg-white px-3 py-2 text-sm text-claude-text outline-none" />
+                    </label>
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={voiceBusy}
+                      onClick={async () => {
+                        setVoiceBusy(true)
+                        setVoiceTestStatus('')
+                        try {
+                          const result = await window.electronAPI.localVoiceTts({
+                            piperPath: voice.piperPath,
+                            modelPath: voice.piperModelPath,
+                            text: voiceSampleText,
+                            outputPath: voiceOutputPath || undefined,
+                          })
+                          setVoiceTestStatus(result.detail)
+                        } catch (error) {
+                          setVoiceTestStatus(error instanceof Error ? error.message : 'Local Piper test failed.')
+                        } finally {
+                          setVoiceBusy(false)
+                        }
+                      }}
+                      className="rounded-xl bg-claude-text px-3 py-2 text-xs font-medium text-white disabled:opacity-50"
+                    >
+                      Test Piper TTS
+                    </button>
+                    <button
+                      type="button"
+                      disabled={voiceBusy}
+                      onClick={async () => {
+                        setVoiceBusy(true)
+                        setVoiceTranscript('')
+                        setVoiceTestStatus('')
+                        try {
+                          const result = await window.electronAPI.localVoiceTranscribe({
+                            whisperPath: voice.whisperPath,
+                            audioPath: voiceInputAudioPath,
+                            model: voiceWhisperModel || 'base',
+                          })
+                          setVoiceTranscript(result.text)
+                          setVoiceTestStatus(result.detail)
+                        } catch (error) {
+                          setVoiceTestStatus(error instanceof Error ? error.message : 'Local Whisper test failed.')
+                        } finally {
+                          setVoiceBusy(false)
+                        }
+                      }}
+                      className="rounded-xl border border-claude-border bg-white px-3 py-2 text-xs font-medium text-claude-text disabled:opacity-50"
+                    >
+                      Test Whisper Transcribe
+                    </button>
+                  </div>
+
+                  {voiceTestStatus ? <div className="mt-3 rounded-xl border border-claude-border bg-white px-3 py-2 text-xs text-claude-secondary">{voiceTestStatus}</div> : null}
+                  {voiceTranscript ? (
+                    <div className="mt-3 rounded-xl border border-claude-border bg-white px-3 py-2">
+                      <div className="text-xs font-semibold uppercase tracking-[0.14em] text-claude-secondary">Transcript</div>
+                      <div className="mt-1 whitespace-pre-wrap text-sm text-claude-text">{voiceTranscript}</div>
+                    </div>
+                  ) : null}
                 </div>
               </SectionCard>
             ) : null}

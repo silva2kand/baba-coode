@@ -3,6 +3,8 @@ import { promises as fs } from 'node:fs'
 import { existsSync, mkdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
+import { spawn } from 'node:child_process'
+import { isIP } from 'node:net'
 import { APP_ROOT, runResearch, type ResearchIpcRequest } from './research-bridge'
 import { readTextFile, writeTextFile, executeBash } from './system-tools'
 import { DispatchService } from './dispatch-service'
@@ -58,6 +60,28 @@ type LocalProviderProbe = {
   models: string[]
   baseUrl: string
   detail: string
+}
+
+type ConnectorTestRequest = {
+  url: string
+  method?: 'GET' | 'POST'
+  token?: string
+  headers?: Record<string, string>
+  body?: string
+}
+
+type LocalVoiceTtsRequest = {
+  piperPath: string
+  modelPath: string
+  text: string
+  outputPath?: string
+}
+
+type LocalVoiceTranscribeRequest = {
+  whisperPath: string
+  audioPath: string
+  model?: string
+  outputDir?: string
 }
 
 function ensureDirectory(targetPath: string) {
@@ -165,6 +189,242 @@ async function fetchUrl(targetUrl: string) {
     contentType,
     title: extractTitle(text),
     preview: stripHtml(text).slice(0, 4000),
+  }
+}
+
+function normalizeHttpOnlyUrl(target: string) {
+  const parsed = new URL(normalizeHttpUrl(target))
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`Unsupported connector protocol: ${parsed.protocol}`)
+  }
+  return parsed.toString()
+}
+
+function isPrivateNetworkTarget(hostname: string) {
+  const lower = hostname.toLowerCase()
+  if (
+    lower === 'localhost' ||
+    lower.endsWith('.localhost') ||
+    lower.endsWith('.local') ||
+    lower.endsWith('.internal') ||
+    !lower.includes('.')
+  ) {
+    return true
+  }
+
+  const ipVersion = isIP(lower)
+  if (ipVersion === 4) {
+    const [a, b] = lower.split('.').map((part) => Number.parseInt(part, 10))
+    if (!Number.isFinite(a) || !Number.isFinite(b)) {
+      return true
+    }
+    return (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      (a === 100 && b >= 64 && b <= 127) ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168)
+    )
+  }
+
+  if (ipVersion === 6) {
+    return lower === '::1' || lower.startsWith('fc') || lower.startsWith('fd') || lower.startsWith('fe80:')
+  }
+
+  return false
+}
+
+function validateConnectorTarget(url: string) {
+  const parsed = new URL(normalizeHttpOnlyUrl(url))
+  if (parsed.protocol !== 'https:') {
+    throw new Error('Connector API tests require HTTPS URLs to protect tokens in transit.')
+  }
+  if (isPrivateNetworkTarget(parsed.hostname)) {
+    throw new Error('Connector API tests block localhost/private network targets for safety.')
+  }
+  return parsed.toString()
+}
+
+function sanitizeConnectorHeaders(headers?: Record<string, string>) {
+  const blocked = new Set(['host', 'connection', 'content-length', 'upgrade', 'proxy-authorization'])
+  const next: Record<string, string> = {}
+  if (!headers) {
+    return next
+  }
+
+  for (const [key, value] of Object.entries(headers)) {
+    const trimmedKey = key.trim()
+    const trimmedValue = value.trim()
+    if (!trimmedKey || !trimmedValue) {
+      continue
+    }
+
+    const lower = trimmedKey.toLowerCase()
+    if (blocked.has(lower) || lower.startsWith('sec-')) {
+      continue
+    }
+    next[trimmedKey] = trimmedValue
+  }
+
+  return next
+}
+
+async function connectorTestRequest(request: ConnectorTestRequest) {
+  const url = validateConnectorTarget(request.url)
+  const method = request.method === 'POST' ? 'POST' : 'GET'
+  const headers: Record<string, string> = {
+    Accept: 'application/json, text/plain;q=0.9, */*;q=0.8',
+  }
+
+  if (request.token?.trim()) {
+    headers.Authorization = `Bearer ${request.token.trim()}`
+  }
+  const customHeaders = sanitizeConnectorHeaders(request.headers)
+  for (const [key, value] of Object.entries(customHeaders)) {
+    headers[key] = value
+  }
+
+  const body = method === 'POST' ? (request.body ?? '') : undefined
+  if (body && body.length > 100_000) {
+    throw new Error('Connector request body is too large (limit: 100KB).')
+  }
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 20_000)
+  let response: Response
+  try {
+    response = await fetch(url, {
+      method,
+      headers,
+      body,
+      signal: controller.signal,
+    })
+  } finally {
+    clearTimeout(timer)
+  }
+  const contentType = response.headers.get('content-type') || 'unknown'
+  const text = await response.text()
+  const preview = text.slice(0, 4000)
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    url,
+    contentType,
+    preview,
+    error: response.ok ? null : `Request failed with status ${response.status}`,
+  }
+}
+
+function resolveLocalPathOrFail(rawPath: string, label: string) {
+  const trimmed = rawPath.trim()
+  if (!trimmed) {
+    throw new Error(`${label} is required.`)
+  }
+  const resolved = path.isAbsolute(trimmed) ? trimmed : path.resolve(trimmed)
+  if (!existsSync(resolved)) {
+    throw new Error(`${label} was not found: ${resolved}`)
+  }
+  return resolved
+}
+
+async function runProcess(executable: string, args: string[], stdinData?: string, timeoutMs = 120_000) {
+  return new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
+    const child = spawn(executable, args, {
+      windowsHide: true,
+      shell: false,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+
+    let stdout = ''
+    let stderr = ''
+    const timer = setTimeout(() => {
+      child.kill()
+      reject(new Error(`Process timeout after ${timeoutMs} ms.`))
+    }, timeoutMs)
+
+    child.stdout.on('data', (chunk) => {
+      stdout += String(chunk)
+      if (stdout.length > 200_000) {
+        stdout = stdout.slice(-200_000)
+      }
+    })
+    child.stderr.on('data', (chunk) => {
+      stderr += String(chunk)
+      if (stderr.length > 200_000) {
+        stderr = stderr.slice(-200_000)
+      }
+    })
+    child.on('error', (error) => {
+      clearTimeout(timer)
+      reject(error)
+    })
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      resolve({ code: code ?? -1, stdout, stderr })
+    })
+
+    if (stdinData) {
+      child.stdin.write(stdinData)
+    }
+    child.stdin.end()
+  })
+}
+
+async function runLocalPiperTts(request: LocalVoiceTtsRequest) {
+  const piperPath = resolveLocalPathOrFail(request.piperPath, 'Piper path')
+  const modelPath = resolveLocalPathOrFail(request.modelPath, 'Piper model path')
+  const text = request.text.trim()
+  if (!text) {
+    throw new Error('TTS sample text is required.')
+  }
+
+  const outputPath = request.outputPath?.trim()
+    ? path.resolve(request.outputPath.trim())
+    : path.join(app.getPath('userData'), 'voice', `piper-${Date.now()}.wav`)
+  ensureDirectory(path.dirname(outputPath))
+
+  const result = await runProcess(piperPath, ['--model', modelPath, '--output_file', outputPath], `${text}\n`, 90_000)
+  if (result.code !== 0) {
+    throw new Error(`Piper exited with code ${result.code}. ${result.stderr.slice(0, 300)}`)
+  }
+
+  return {
+    ok: true,
+    outputPath,
+    detail: `Piper generated audio file at ${outputPath}`,
+    stderr: result.stderr.slice(0, 1000),
+  }
+}
+
+async function runLocalWhisperTranscribe(request: LocalVoiceTranscribeRequest) {
+  const whisperPath = resolveLocalPathOrFail(request.whisperPath, 'Whisper path')
+  const audioPath = resolveLocalPathOrFail(request.audioPath, 'Audio file path')
+  const outputDir = request.outputDir?.trim() ? path.resolve(request.outputDir.trim()) : path.join(app.getPath('userData'), 'voice')
+  ensureDirectory(outputDir)
+
+  const model = request.model?.trim() || 'base'
+  const result = await runProcess(whisperPath, [audioPath, '--model', model, '--output_format', 'txt', '--output_dir', outputDir], undefined, 180_000)
+  if (result.code !== 0) {
+    throw new Error(`Whisper exited with code ${result.code}. ${result.stderr.slice(0, 300)}`)
+  }
+
+  const transcriptPath = path.join(outputDir, `${path.parse(audioPath).name}.txt`)
+  let text = ''
+  if (existsSync(transcriptPath)) {
+    text = await fs.readFile(transcriptPath, 'utf8')
+  } else {
+    text = result.stdout
+  }
+
+  return {
+    ok: true,
+    transcriptPath: existsSync(transcriptPath) ? transcriptPath : null,
+    text: text.trim(),
+    detail: existsSync(transcriptPath) ? `Transcription saved to ${transcriptPath}` : 'Transcription completed.',
+    stderr: result.stderr.slice(0, 1000),
   }
 }
 
@@ -423,6 +683,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('tool:writeFile', async (_event, targetPath: string, content: string) => writeTextFile(targetPath, content))
   ipcMain.handle('tool:openExternal', async (_event, target: string) => openExternalTarget(target))
   ipcMain.handle('tool:webFetch', async (_event, targetUrl: string) => fetchUrl(targetUrl))
+  ipcMain.handle('connector:testRequest', async (_event, request: ConnectorTestRequest) => connectorTestRequest(request))
   ipcMain.handle('research:run', async (_event, request: ResearchIpcRequest) => runResearch(request))
   ipcMain.handle('tool:bash', async (_event, command: string) => {
     const result = await executeBash(command)
@@ -430,6 +691,8 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('providers:list', async () => probeLocalProviders())
   ipcMain.handle('providers:connect', () => ({ ok: false, message: 'Direct provider connections are not implemented in the Electron bridge yet.' }))
+  ipcMain.handle('voice:localTts', async (_event, request: LocalVoiceTtsRequest) => runLocalPiperTts(request))
+  ipcMain.handle('voice:localTranscribe', async (_event, request: LocalVoiceTranscribeRequest) => runLocalWhisperTranscribe(request))
 
   // ─── Computer Control (Phase 1) ─────────────────────────
   ipcMain.handle('computer:screenshot', async () => {

@@ -27,6 +27,52 @@ type BashResult = {
   stderr: string
 }
 
+type ConnectorTestRequest = {
+  url: string
+  method?: 'GET' | 'POST'
+  token?: string
+  headers?: Record<string, string>
+  body?: string
+}
+
+type ConnectorTestResult = {
+  ok: boolean
+  status: number
+  url: string
+  contentType: string
+  preview: string
+  error: string | null
+}
+
+type LocalVoiceTtsRequest = {
+  piperPath: string
+  modelPath: string
+  text: string
+  outputPath?: string
+}
+
+type LocalVoiceTtsResult = {
+  ok: boolean
+  outputPath: string
+  detail: string
+  stderr: string
+}
+
+type LocalVoiceTranscribeRequest = {
+  whisperPath: string
+  audioPath: string
+  model?: string
+  outputDir?: string
+}
+
+type LocalVoiceTranscribeResult = {
+  ok: boolean
+  transcriptPath: string | null
+  text: string
+  detail: string
+  stderr: string
+}
+
 type LocalProviderProbe = {
   id: string
   name: string
@@ -247,7 +293,10 @@ declare global {
       openExternal: (target: string) => Promise<{ ok: boolean; target: string }>
       listDir: (path: string) => Promise<DirectoryItem[]>
       webFetch: (url: string) => Promise<WebFetchResult>
+      connectorTestRequest: (request: ConnectorTestRequest) => Promise<ConnectorTestResult>
       runResearch: (request: ResearchCommandRequest) => Promise<ResearchCommandResult>
+      localVoiceTts: (request: LocalVoiceTtsRequest) => Promise<LocalVoiceTtsResult>
+      localVoiceTranscribe: (request: LocalVoiceTranscribeRequest) => Promise<LocalVoiceTranscribeResult>
 
       // ─── Provider Management ────────────────────────────────
       getLocalProviders: () => Promise<LocalProviderProbe[]>
