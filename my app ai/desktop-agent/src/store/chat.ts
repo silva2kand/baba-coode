@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { queryEngine } from '../lib/query-engine'
+import type { ProviderConnectionConfig } from '../lib/provider-config'
 
 const STORAGE_KEY = 'silva-command-center-chat'
 
@@ -57,6 +58,9 @@ type ChatState = {
   sendMessage: (content: string) => Promise<void>
   refreshProviders: () => void
   probeProviders: () => Promise<void>
+  connectProvider: (id: string, config: ProviderConnectionConfig) => Promise<{ ok: boolean; message: string }>
+  disconnectProvider: (id: string, removeConfig?: boolean) => Promise<{ ok: boolean; message: string }>
+  getProviderConfig: (id: string) => ProviderConnectionConfig | null
   setActiveProvider: (id: string) => void
   clearMessages: () => void
 }
@@ -333,6 +337,30 @@ export const useChatStore = create<ChatState>((set, get) => ({
       })
     })
   },
+  connectProvider: async (id, config) => {
+    const result = await queryEngine.connectProvider(id, config)
+    set({
+      providers: queryEngine.getProviders(),
+      activeProviderId: queryEngine.getActiveProvider()?.id || null,
+    })
+    if (result.ok) {
+      localStorage.setItem('silva-openai-config', JSON.stringify({
+        baseUrl: config.baseUrl || 'https://api.openai.com/v1',
+        apiKey: config.apiKey,
+        model: config.model || 'gpt-4o-mini',
+      }))
+    }
+    return result
+  },
+  disconnectProvider: async (id, removeConfig = false) => {
+    const result = await queryEngine.disconnectProvider(id, removeConfig)
+    set({
+      providers: queryEngine.getProviders(),
+      activeProviderId: queryEngine.getActiveProvider()?.id || null,
+    })
+    return result
+  },
+  getProviderConfig: (id) => queryEngine.getProviderConfig(id),
   setActiveProvider: (id) => {
     const success = queryEngine.selectProvider(id)
     if (!success) {

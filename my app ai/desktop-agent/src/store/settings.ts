@@ -8,7 +8,22 @@ export type FeatureToggle = {
   blockedReason?: string
 }
 
-export type ThemeMode = 'sand' | 'light'
+export type ThemeMode =
+  | 'sand'
+  | 'light'
+  | 'ocean'
+  | 'forest'
+  | 'sunset'
+  | 'graphite'
+  | 'rose'
+  | 'mint'
+  | 'cobalt'
+  | 'amber'
+  | 'plum'
+  | 'slate'
+  | 'nord'
+  | 'neon'
+  | 'monochrome'
 export type FontSizeMode = 'sm' | 'md' | 'lg'
 export type LayoutMode = 'claude' | 'coding'
 export type RoutingPreset = 'balanced-hybrid' | 'coding-first' | 'reasoning-first' | 'vision-first'
@@ -73,10 +88,15 @@ export type UiSettings = {
 
 export type VoiceSettings = {
   enabled: boolean
+  engine: 'browser' | 'local-whisper-piper'
   voice: string
   wakeWordEnabled: boolean
   wakeWord: string
   microphone: string
+  whisperPath: string
+  piperPath: string
+  piperModelPath: string
+  autoTranscribe: boolean
 }
 
 export type DeveloperSettings = {
@@ -125,16 +145,16 @@ const defaultSettings: SettingsSnapshot = {
     legal: { enabled: false, available: true },
     accounting: { enabled: false, available: true },
     coding: { enabled: true, available: true },
-    content: { enabled: false, available: false, blockedReason: 'Dedicated content-creation workflows are not implemented yet.' },
-    property: { enabled: false, available: false, blockedReason: 'Dedicated property scouting workflows are not implemented yet.' },
+    content: { enabled: true, available: true },
+    property: { enabled: true, available: true },
     generalPA: { enabled: true, available: true },
     reasoning: { enabled: true, available: true },
     imageVideoAnalysis: { enabled: true, available: true },
   },
   dataSources: {
-    emailIngestion: { enabled: false, available: false, blockedReason: 'Dedicated email ingestion is not implemented yet.' },
-    whatsappIngestion: { enabled: false, available: false, blockedReason: 'Dedicated WhatsApp ingestion and export handling is not implemented yet.' },
-    pdfDocumentIngestion: { enabled: false, available: false, blockedReason: 'Document ingestion and indexing are not implemented yet.' },
+    emailIngestion: { enabled: true, available: true },
+    whatsappIngestion: { enabled: true, available: true },
+    pdfDocumentIngestion: { enabled: true, available: true },
     screenshotAnalysis: { enabled: true, available: true },
     localFolderWatchers: { enabled: false, available: false, blockedReason: 'Local folder watcher services are not implemented yet.' },
   },
@@ -163,10 +183,15 @@ const defaultSettings: SettingsSnapshot = {
   },
   voice: {
     enabled: false,
+    engine: 'browser',
     voice: 'Warm Neutral',
     wakeWordEnabled: false,
     wakeWord: 'Baba',
     microphone: 'System Default',
+    whisperPath: '',
+    piperPath: '',
+    piperModelPath: '',
+    autoTranscribe: false,
   },
   developer: {
     codingConsole: { enabled: false, available: false, blockedReason: 'A dedicated coding console toggle is not wired separately yet.' },
@@ -241,21 +266,41 @@ function loadSnapshot(): SettingsSnapshot {
     if (snapshot.agents.content.blockedReason === 'Requires task engine (Phase 3).') {
       snapshot.agents.content = defaults.agents.content
     }
+    if (snapshot.agents.content.blockedReason === 'Dedicated content-creation workflows are not implemented yet.') {
+      snapshot.agents.content = defaults.agents.content
+    }
 
     if (snapshot.agents.property.blockedReason === 'Requires task engine (Phase 3).') {
+      snapshot.agents.property = defaults.agents.property
+    }
+    if (snapshot.agents.property.blockedReason === 'Dedicated property scouting workflows are not implemented yet.') {
       snapshot.agents.property = defaults.agents.property
     }
 
     if (snapshot.dataSources.emailIngestion.blockedReason === 'Requires browser automation (Phase 2).') {
       snapshot.dataSources.emailIngestion = defaults.dataSources.emailIngestion
     }
+    if (snapshot.dataSources.emailIngestion.blockedReason === 'Dedicated email ingestion is not implemented yet.') {
+      snapshot.dataSources.emailIngestion = defaults.dataSources.emailIngestion
+    }
 
     if (snapshot.dataSources.whatsappIngestion.blockedReason === 'Requires computer control (Phase 1) + browser automation (Phase 2).') {
+      snapshot.dataSources.whatsappIngestion = defaults.dataSources.whatsappIngestion
+    }
+    if (snapshot.dataSources.whatsappIngestion.blockedReason === 'Dedicated WhatsApp ingestion and export handling is not implemented yet.') {
       snapshot.dataSources.whatsappIngestion = defaults.dataSources.whatsappIngestion
     }
 
     if (snapshot.dataSources.pdfDocumentIngestion.blockedReason === 'Requires file watcher pipeline (Phase 5).') {
       snapshot.dataSources.pdfDocumentIngestion = defaults.dataSources.pdfDocumentIngestion
+    }
+    if (snapshot.dataSources.pdfDocumentIngestion.blockedReason === 'Document ingestion and indexing are not implemented yet.') {
+      snapshot.dataSources.pdfDocumentIngestion = defaults.dataSources.pdfDocumentIngestion
+    }
+
+    const knownThemes: ThemeMode[] = ['sand', 'light', 'ocean', 'forest', 'sunset', 'graphite', 'rose', 'mint', 'cobalt', 'amber', 'plum', 'slate', 'nord', 'neon', 'monochrome']
+    if (!knownThemes.includes(snapshot.ui.theme)) {
+      snapshot.ui.theme = defaults.ui.theme
     }
 
     if (snapshot.dataSources.localFolderWatchers.blockedReason === 'Requires file watcher service (Phase 5).') {

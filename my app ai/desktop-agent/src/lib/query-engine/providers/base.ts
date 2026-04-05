@@ -5,6 +5,7 @@ export abstract class LLMProvider {
   models: string[] = []
   kind: 'local' | 'remote' | 'offline' = 'remote'
   statusDetail = 'Provider scaffold only in this build.'
+  configure?(_config: Record<string, unknown>): Promise<void> | void
 
   abstract isAvailable(): Promise<boolean>
   abstract connect(): Promise<void>

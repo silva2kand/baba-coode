@@ -130,7 +130,7 @@ function buildResponse(messages: Message[]): string {
       case 'rewrite':
         return buildRewrite(command.payload)
       case 'status':
-        return 'Status:\n\n- Local assistant is active.\n- External providers are scaffolded but not configured in this build yet.'
+        return 'Status:\n\n- Local assistant is active.\n- External providers can be connected from Settings > Models with API key, base URL, and model.'
       default:
         return `Unknown command: /${command.command}\n\nUse /help to see available commands.`
     }

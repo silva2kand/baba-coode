@@ -1,11 +1,19 @@
 import { LLMProvider } from './base'
 
-type OpenAICompatibleLocalConfig = {
+type OpenAICompatibleProviderConfig = {
   id: string
   name: string
   baseUrl: string
   defaultModels: string[]
   offlineDetail: string
+  requiresApiKey?: boolean
+  staticHeaders?: Record<string, string>
+}
+
+type OpenAICompatibleConfigUpdate = {
+  apiKey?: string
+  baseUrl?: string
+  model?: string
 }
 
 type NormalizedMessage = {
@@ -73,28 +81,70 @@ function contentToText(content: unknown): string {
   return ''
 }
 
+function normalizeBaseUrl(baseUrl: string) {
+  return baseUrl.replace(/\/+$/, '')
+}
+
 export class OpenAICompatibleLocalProvider extends LLMProvider {
   readonly id: string
   readonly name: string
-  readonly baseUrl: string
+  readonly requiresApiKey: boolean
+  readonly staticHeaders: Record<string, string>
+  baseUrl: string
+  apiKey = ''
 
-  constructor(config: OpenAICompatibleLocalConfig) {
+  constructor(config: OpenAICompatibleProviderConfig) {
     super()
     this.id = config.id
     this.name = config.name
-    this.baseUrl = config.baseUrl
+    this.baseUrl = normalizeBaseUrl(config.baseUrl)
     this.models = config.defaultModels
     this.kind = 'local'
     this.statusDetail = config.offlineDetail
+    this.requiresApiKey = config.requiresApiKey ?? false
+    this.staticHeaders = config.staticHeaders ?? {}
+  }
+
+  configure(config: OpenAICompatibleConfigUpdate) {
+    if (typeof config.baseUrl === 'string' && config.baseUrl.trim()) {
+      this.baseUrl = normalizeBaseUrl(config.baseUrl.trim())
+    }
+    if (typeof config.apiKey === 'string') {
+      this.apiKey = config.apiKey.trim()
+    }
+    if (typeof config.model === 'string' && config.model.trim()) {
+      const model = config.model.trim()
+      if (!this.models.includes(model)) {
+        this.models = [model, ...this.models].slice(0, 20)
+      } else {
+        this.models = [model, ...this.models.filter((item) => item !== model)]
+      }
+    }
+  }
+
+  private buildHeaders() {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...this.staticHeaders,
+    }
+    if (this.apiKey) {
+      headers.Authorization = `Bearer ${this.apiKey}`
+    }
+    return headers
   }
 
   async isAvailable(): Promise<boolean> {
+    if (this.requiresApiKey && !this.apiKey) {
+      return false
+    }
+
     const controller = new AbortController()
-    const timer = window.setTimeout(() => controller.abort(), 1200)
+    const timer = window.setTimeout(() => controller.abort(), 1500)
 
     try {
       const response = await fetch(`${this.baseUrl}/models`, {
         signal: controller.signal,
+        headers: this.buildHeaders(),
       })
 
       if (!response.ok) {
@@ -119,7 +169,17 @@ export class OpenAICompatibleLocalProvider extends LLMProvider {
   }
 
   async connect(): Promise<void> {
-    this.connected = true
+    if (this.requiresApiKey && !this.apiKey) {
+      this.connected = false
+      this.statusDetail = `${this.name} requires an API key.`
+      throw new Error(`${this.name} requires an API key.`)
+    }
+
+    const available = await this.isAvailable()
+    this.connected = available
+    this.statusDetail = available
+      ? `${this.name} connected.`
+      : `${this.name} could not be reached at ${this.baseUrl}.`
   }
 
   async disconnect(): Promise<void> {
@@ -137,7 +197,7 @@ export class OpenAICompatibleLocalProvider extends LLMProvider {
 
   async complete(messages: unknown[], options: unknown = {}): Promise<string> {
     if (!this.connected) {
-      return `${this.name} is not connected.`
+      throw new Error(`${this.name} is not connected.`)
     }
 
     const normalizedMessages = normalizeMessages(messages)
@@ -152,7 +212,7 @@ export class OpenAICompatibleLocalProvider extends LLMProvider {
     }
 
     const payload = {
-      model: optionMap.model || this.models[0] || 'local-model',
+      model: optionMap.model || this.models[0] || 'model',
       messages: normalizedMessages,
       temperature: typeof optionMap.temperature === 'number' ? optionMap.temperature : 0.4,
       max_tokens: typeof optionMap.maxTokens === 'number' ? optionMap.maxTokens : 1024,
@@ -165,9 +225,7 @@ export class OpenAICompatibleLocalProvider extends LLMProvider {
     try {
       const response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: this.buildHeaders(),
         body: JSON.stringify(payload),
         signal: controller.signal,
       })
@@ -185,7 +243,7 @@ export class OpenAICompatibleLocalProvider extends LLMProvider {
 
       return content
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown local provider error.'
+      const message = error instanceof Error ? error.message : 'Unknown provider error.'
       this.statusDetail = message
       throw error
     } finally {
@@ -193,3 +251,4 @@ export class OpenAICompatibleLocalProvider extends LLMProvider {
     }
   }
 }
+

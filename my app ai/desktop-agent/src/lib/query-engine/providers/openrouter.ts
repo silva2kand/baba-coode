@@ -1,31 +1,19 @@
-import { LLMProvider } from './base'
+import { OpenAICompatibleLocalProvider } from './openai-compatible-local'
 
-export class OpenRouterProvider extends LLMProvider {
-  name = 'OpenRouter'
-  id = 'openrouter'
-  models = ['openrouter/auto']
-
-  async isAvailable(): Promise<boolean> {
-    return true
-  }
-
-  async connect(): Promise<void> {
-    this.connected = true
-  }
-
-  async disconnect(): Promise<void> {
-    this.connected = false
-  }
-
-  async listModels(): Promise<string[]> {
-    return this.models
-  }
-
-  async *stream(_messages: unknown[], _options: unknown = {}): AsyncGenerator<string, void, unknown> {
-    yield 'OpenRouter provider stub response.'
-  }
-
-  async complete(_messages: unknown[], _options: unknown = {}): Promise<string> {
-    return 'OpenRouter provider stub response.'
+export class OpenRouterProvider extends OpenAICompatibleLocalProvider {
+  constructor() {
+    super({
+      id: 'openrouter',
+      name: 'OpenRouter',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      defaultModels: ['openrouter/auto'],
+      offlineDetail: 'OpenRouter API is not configured yet.',
+      requiresApiKey: true,
+      staticHeaders: {
+        'HTTP-Referer': 'https://localhost',
+        'X-Title': 'SILVA Command Center',
+      },
+    })
+    this.kind = 'remote'
   }
 }

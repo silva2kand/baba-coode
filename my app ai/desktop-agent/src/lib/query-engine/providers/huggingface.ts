@@ -1,31 +1,15 @@
-import { LLMProvider } from './base'
+import { OpenAICompatibleLocalProvider } from './openai-compatible-local'
 
-export class HuggingFaceProvider extends LLMProvider {
-  name = 'Hugging Face'
-  id = 'huggingface'
-  models = ['meta-llama/Meta-Llama-3-8B-Instruct']
-
-  async isAvailable(): Promise<boolean> {
-    return true
-  }
-
-  async connect(): Promise<void> {
-    this.connected = true
-  }
-
-  async disconnect(): Promise<void> {
-    this.connected = false
-  }
-
-  async listModels(): Promise<string[]> {
-    return this.models
-  }
-
-  async *stream(_messages: unknown[], _options: unknown = {}): AsyncGenerator<string, void, unknown> {
-    yield 'Hugging Face provider stub response.'
-  }
-
-  async complete(_messages: unknown[], _options: unknown = {}): Promise<string> {
-    return 'Hugging Face provider stub response.'
+export class HuggingFaceProvider extends OpenAICompatibleLocalProvider {
+  constructor() {
+    super({
+      id: 'huggingface',
+      name: 'Hugging Face',
+      baseUrl: 'https://router.huggingface.co/v1',
+      defaultModels: ['meta-llama/Meta-Llama-3-8B-Instruct'],
+      offlineDetail: 'Hugging Face API is not configured yet.',
+      requiresApiKey: true,
+    })
+    this.kind = 'remote'
   }
 }

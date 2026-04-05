@@ -8,6 +8,7 @@ import { QwenProvider } from './providers/qwen'
 import { GrokProvider } from './providers/grok'
 import { OpenRouterProvider } from './providers/openrouter'
 import { HuggingFaceProvider } from './providers/huggingface'
+import { getProviderConfig, removeProviderConfig, saveProviderConfig, type ProviderConnectionConfig } from '../provider-config'
 
 export class QueryEngine {
   private providers: Map<string, LLMProvider> = new Map()
@@ -16,6 +17,7 @@ export class QueryEngine {
   async init(onProvidersChanged?: () => void) {
     await this.registerLocalProvider()
     this.registerApiProviders()
+    await this.restoreApiProviderConnections()
     onProvidersChanged?.()
     void this.autoDetectProviders(onProvidersChanged)
   }
@@ -92,9 +94,78 @@ export class QueryEngine {
 
     for (const api of apiProviders) {
       const instance = new api.provider()
-      instance.statusDetail = `${instance.name} is scaffolded, but API connection is not configured in this build yet.`
+      instance.statusDetail = `${instance.name} is not configured yet. Add API key in Settings > Models.`
       this.providers.set(api.name, instance)
     }
+  }
+
+  private async restoreApiProviderConnections() {
+    const remoteProviders = Array.from(this.providers.values()).filter((provider) => provider.kind === 'remote')
+    for (const provider of remoteProviders) {
+      const config = getProviderConfig(provider.id)
+      if (!config) {
+        continue
+      }
+
+      try {
+        if (provider.configure) {
+          await provider.configure(config as unknown as Record<string, unknown>)
+        }
+        await provider.connect()
+      } catch (error) {
+        provider.connected = false
+        provider.statusDetail = error instanceof Error ? error.message : `${provider.name} configuration failed.`
+      }
+    }
+  }
+
+  getProviderConfig(providerId: string) {
+    return getProviderConfig(providerId)
+  }
+
+  async connectProvider(providerId: string, config: ProviderConnectionConfig) {
+    const provider = this.providers.get(providerId)
+    if (!provider) {
+      return { ok: false, message: `Provider ${providerId} was not found.` }
+    }
+
+    try {
+      if (provider.configure) {
+        await provider.configure(config as unknown as Record<string, unknown>)
+      }
+      await provider.connect()
+      if (!provider.connected) {
+        return { ok: false, message: `${provider.name} did not report a connected state.` }
+      }
+
+      saveProviderConfig(providerId, config)
+      provider.statusDetail = `${provider.name} connected and configuration saved.`
+      return { ok: true, message: `${provider.name} connected.` }
+    } catch (error) {
+      provider.connected = false
+      provider.statusDetail = error instanceof Error ? error.message : `${provider.name} connection failed.`
+      return { ok: false, message: provider.statusDetail }
+    }
+  }
+
+  async disconnectProvider(providerId: string, removeConfig = false) {
+    const provider = this.providers.get(providerId)
+    if (!provider) {
+      return { ok: false, message: `Provider ${providerId} was not found.` }
+    }
+
+    await provider.disconnect()
+    if (this.activeProvider?.id === provider.id) {
+      const localProvider = this.providers.get('local')
+      if (localProvider) {
+        this.activeProvider = localProvider
+      }
+    }
+    if (removeConfig) {
+      removeProviderConfig(providerId)
+    }
+    provider.statusDetail = `${provider.name} disconnected.`
+    return { ok: true, message: `${provider.name} disconnected.` }
   }
 
   async complete(messages: any[], options: any = {}) {

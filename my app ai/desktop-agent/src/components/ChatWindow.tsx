@@ -44,7 +44,8 @@ export function ChatWindow({ onSubmitMessage, onArtifactCreated, onNavigate }: C
     webkitSpeechRecognition?: new () => BrowserSpeechRecognition
   }
   const SpeechRecognitionConstructor = speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition
-  const voiceAvailable = Boolean(SpeechRecognitionConstructor) || 'speechSynthesis' in window
+  const localVoiceConfigured = Boolean(voice.whisperPath.trim() && voice.piperPath.trim())
+  const voiceAvailable = localVoiceConfigured || Boolean(SpeechRecognitionConstructor) || 'speechSynthesis' in window
   const assistantStatus = voiceStatus || (isReady ? 'Local assistant is ready for new work.' : 'Initializing local assistant...')
   const greeting = useMemo(() => {
     const hour = new Date().getHours()
@@ -76,6 +77,15 @@ export function ChatWindow({ onSubmitMessage, onArtifactCreated, onNavigate }: C
   }
 
   const handleVoiceToggle = () => {
+    if (voice.engine === 'local-whisper-piper') {
+      if (!localVoiceConfigured) {
+        setVoiceStatus('Local mode selected, but Whisper/Piper paths are missing in Settings > Voice.')
+        return
+      }
+      setVoiceStatus('Local Whisper/Piper mode is configured. Browser voice capture stays off in local mode.')
+      return
+    }
+
     if (!SpeechRecognitionConstructor) {
       setVoiceStatus('Voice input is not available in this runtime.')
       return
@@ -167,7 +177,7 @@ export function ChatWindow({ onSubmitMessage, onArtifactCreated, onNavigate }: C
               <div className="flex flex-wrap items-center justify-center gap-2 text-center text-sm text-claude-secondary">
                 <div className="rounded-full border border-claude-border bg-white px-4 py-1.5">Provider: {activeProviderId || 'Offline Assistant'}</div>
                 <div className={`rounded-full px-4 py-1.5 ${voiceAvailable ? 'bg-emerald-50 text-emerald-700' : 'bg-stone-100 text-stone-600'}`}>
-                  {voiceAvailable ? 'Voice ready' : 'Voice unavailable'}
+                  {voiceAvailable ? `Voice ready (${voice.engine === 'local-whisper-piper' ? 'Local' : 'Browser'})` : 'Voice unavailable'}
                 </div>
               </div>
 

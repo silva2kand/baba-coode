@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useChatStore } from '../store/chat'
 import { useSettingsStore, type FeatureToggle, type ToggleSection } from '../store/settings'
+import type { ProviderConnectionConfig } from '../lib/provider-config'
 import type { PreviewFocusMode } from '../types/workspace'
 
 type SettingsPanelProps = {
@@ -29,6 +30,8 @@ type ProfileForm = {
   role: string
   preferences: string
 }
+
+type ProviderDraftMap = Record<string, ProviderConnectionConfig>
 
 const PROFILE_STORAGE_KEY = 'silva-command-center-profile'
 
@@ -166,7 +169,15 @@ function getProviderStatusLabel(provider: { active: boolean; available: boolean;
   if (provider.kind === 'local') {
     return 'Offline'
   }
-  return 'Scaffolded'
+  return 'Not connected'
+}
+
+function getRemoteBaseUrlHint(providerId: string) {
+  if (providerId === 'openrouter') return 'https://openrouter.ai/api/v1'
+  if (providerId === 'grok') return 'https://api.x.ai/v1'
+  if (providerId === 'qwen') return 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+  if (providerId === 'huggingface') return 'https://router.huggingface.co/v1'
+  return 'Provider base URL'
 }
 
 function ToggleGrid<S extends ToggleSection>({
@@ -199,7 +210,9 @@ export function SettingsPanel({ onPreviewFocus }: SettingsPanelProps) {
   const [activeCategory, setActiveCategory] = useState('general')
   const [profile, setProfile] = useState<ProfileForm>(() => loadProfile())
   const [providerProbeLoading, setProviderProbeLoading] = useState(false)
-  const { providers, activeProviderId, setActiveProvider, probeProviders } = useChatStore()
+  const [providerDrafts, setProviderDrafts] = useState<ProviderDraftMap>({})
+  const [providerActionStatus, setProviderActionStatus] = useState<Record<string, string>>({})
+  const { providers, activeProviderId, setActiveProvider, probeProviders, connectProvider, disconnectProvider, getProviderConfig } = useChatStore()
   const {
     models,
     agents,
@@ -227,10 +240,10 @@ export function SettingsPanel({ onPreviewFocus }: SettingsPanelProps) {
   ]
 
   const routingOptions = ['balanced-hybrid', 'coding-first', 'reasoning-first', 'vision-first']
-  const themeOptions = ['sand', 'light']
+  const themeOptions = ['sand', 'light', 'ocean', 'forest', 'sunset', 'graphite', 'rose', 'mint', 'cobalt', 'amber', 'plum', 'slate', 'nord', 'neon', 'monochrome']
   const fontOptions = ['sm', 'md', 'lg']
   const layoutOptions = ['claude', 'coding']
-  const voiceOptions = ['Warm Neutral', 'Calm Analyst', 'Bright Assistant']
+  const voiceOptions = ['Warm Neutral', 'Calm Analyst', 'Bright Assistant', 'Piper Default']
   const microphoneOptions = ['System Default', 'Studio Mic', 'Headset Mic']
   const primaryCategories = [
     { key: 'general', label: 'General' },
@@ -301,6 +314,37 @@ export function SettingsPanel({ onPreviewFocus }: SettingsPanelProps) {
   useEffect(() => {
     localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile))
   }, [profile])
+
+  useEffect(() => {
+    setProviderDrafts((current) => {
+      const next = { ...current }
+      for (const provider of providers) {
+        if (provider.kind !== 'remote') {
+          continue
+        }
+        if (next[provider.id]) {
+          continue
+        }
+        const existing = getProviderConfig(provider.id)
+        next[provider.id] = {
+          apiKey: existing?.apiKey || '',
+          baseUrl: existing?.baseUrl || '',
+          model: existing?.model || provider.models[0] || '',
+        }
+      }
+      return next
+    })
+  }, [getProviderConfig, providers])
+
+  const updateProviderDraft = (providerId: string, key: keyof ProviderConnectionConfig, value: string) => {
+    setProviderDrafts((current) => ({
+      ...current,
+      [providerId]: {
+        ...current[providerId],
+        [key]: value,
+      },
+    }))
+  }
 
   return (
     <section className="h-full overflow-auto bg-[#fbf8f2] p-5">
@@ -454,14 +498,81 @@ export function SettingsPanel({ onPreviewFocus }: SettingsPanelProps) {
                       <div className="mt-2 text-xs text-claude-secondary">
                         {provider.detail}
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => setActiveProvider(provider.id)}
-                        disabled={!provider.available || activeProviderId === provider.id}
-                        className="mt-3 rounded-full border border-claude-border px-3 py-1.5 text-xs font-medium text-claude-text disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {provider.active ? 'Selected' : provider.available ? 'Use provider' : provider.kind === 'local' ? 'Offline' : 'Not configured'}
-                      </button>
+
+                      {provider.kind === 'remote' ? (
+                        <div className="mt-3 space-y-2 rounded-2xl border border-claude-border bg-white p-3">
+                          <input
+                            type="password"
+                            value={providerDrafts[provider.id]?.apiKey || ''}
+                            onChange={(event) => updateProviderDraft(provider.id, 'apiKey', event.target.value)}
+                            placeholder="API key"
+                            className="w-full rounded-xl border border-claude-border bg-stone-50 px-3 py-2 text-xs outline-none"
+                          />
+                          <input
+                            value={providerDrafts[provider.id]?.baseUrl || ''}
+                            onChange={(event) => updateProviderDraft(provider.id, 'baseUrl', event.target.value)}
+                            placeholder={getRemoteBaseUrlHint(provider.id)}
+                            className="w-full rounded-xl border border-claude-border bg-stone-50 px-3 py-2 text-xs outline-none"
+                          />
+                          <input
+                            value={providerDrafts[provider.id]?.model || ''}
+                            onChange={(event) => updateProviderDraft(provider.id, 'model', event.target.value)}
+                            placeholder="Model"
+                            className="w-full rounded-xl border border-claude-border bg-stone-50 px-3 py-2 text-xs outline-none"
+                          />
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const draft = providerDrafts[provider.id]
+                                if (!draft?.apiKey) {
+                                  setProviderActionStatus((current) => ({ ...current, [provider.id]: 'API key is required.' }))
+                                  return
+                                }
+
+                                const result = await connectProvider(provider.id, draft)
+                                setProviderActionStatus((current) => ({ ...current, [provider.id]: result.message }))
+                                if (result.ok) {
+                                  setActiveProvider(provider.id)
+                                }
+                              }}
+                              className="rounded-full bg-claude-text px-3 py-1.5 text-xs font-medium text-white"
+                            >
+                              Connect
+                            </button>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const result = await disconnectProvider(provider.id, false)
+                                setProviderActionStatus((current) => ({ ...current, [provider.id]: result.message }))
+                              }}
+                              className="rounded-full border border-claude-border px-3 py-1.5 text-xs font-medium text-claude-text"
+                            >
+                              Disconnect
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setActiveProvider(provider.id)}
+                              disabled={!provider.available || activeProviderId === provider.id}
+                              className="rounded-full border border-claude-border px-3 py-1.5 text-xs font-medium text-claude-text disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {provider.active ? 'Selected' : 'Use provider'}
+                            </button>
+                          </div>
+                          {providerActionStatus[provider.id] ? (
+                            <div className="text-[11px] text-claude-secondary">{providerActionStatus[provider.id]}</div>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setActiveProvider(provider.id)}
+                          disabled={!provider.available || activeProviderId === provider.id}
+                          className="mt-3 rounded-full border border-claude-border px-3 py-1.5 text-xs font-medium text-claude-text disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {provider.active ? 'Selected' : provider.available ? 'Use provider' : provider.kind === 'local' ? 'Offline' : 'Not configured'}
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -495,9 +606,23 @@ export function SettingsPanel({ onPreviewFocus }: SettingsPanelProps) {
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                   <BooleanSelectRow label="Enable voice" value={voice.enabled} onChange={(value) => setVoiceSetting('enabled', value)} />
                   <BooleanSelectRow label="Enable wake word" value={voice.wakeWordEnabled} onChange={(value) => setVoiceSetting('wakeWordEnabled', value)} />
+                  <SelectRow label="Engine" value={voice.engine} options={['browser', 'local-whisper-piper']} onChange={(value) => setVoiceSetting('engine', value as typeof voice.engine)} />
                   <SelectRow label="Voice" value={voice.voice} options={voiceOptions} onChange={(value) => setVoiceSetting('voice', value)} />
                   <SelectRow label="Wake word" value={voice.wakeWord} options={['Baba', 'Silva', 'Command Center']} onChange={(value) => setVoiceSetting('wakeWord', value)} />
                   <SelectRow label="Microphone" value={voice.microphone} options={microphoneOptions} onChange={(value) => setVoiceSetting('microphone', value)} />
+                  <label className="flex flex-col gap-2 rounded-2xl border border-claude-border bg-stone-50 p-4 text-sm text-claude-text md:col-span-2 xl:col-span-3">
+                    <span className="font-medium">Whisper executable path</span>
+                    <input value={voice.whisperPath} onChange={(event) => setVoiceSetting('whisperPath', event.target.value)} placeholder="C:\\tools\\whisper\\whisper.exe" className="rounded-xl border border-claude-border bg-white px-3 py-2 text-sm outline-none" />
+                  </label>
+                  <label className="flex flex-col gap-2 rounded-2xl border border-claude-border bg-stone-50 p-4 text-sm text-claude-text md:col-span-2 xl:col-span-3">
+                    <span className="font-medium">Piper executable path</span>
+                    <input value={voice.piperPath} onChange={(event) => setVoiceSetting('piperPath', event.target.value)} placeholder="C:\\tools\\piper\\piper.exe" className="rounded-xl border border-claude-border bg-white px-3 py-2 text-sm outline-none" />
+                  </label>
+                  <label className="flex flex-col gap-2 rounded-2xl border border-claude-border bg-stone-50 p-4 text-sm text-claude-text md:col-span-2 xl:col-span-3">
+                    <span className="font-medium">Piper model path</span>
+                    <input value={voice.piperModelPath} onChange={(event) => setVoiceSetting('piperModelPath', event.target.value)} placeholder="C:\\tools\\piper\\en_US-lessac-medium.onnx" className="rounded-xl border border-claude-border bg-white px-3 py-2 text-sm outline-none" />
+                  </label>
+                  <BooleanSelectRow label="Auto transcribe mic input" value={voice.autoTranscribe} onChange={(value) => setVoiceSetting('autoTranscribe', value)} />
                 </div>
               </SectionCard>
             ) : null}

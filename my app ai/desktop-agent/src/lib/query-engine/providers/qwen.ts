@@ -1,31 +1,15 @@
-import { LLMProvider } from './base'
+import { OpenAICompatibleLocalProvider } from './openai-compatible-local'
 
-export class QwenProvider extends LLMProvider {
-  name = 'Qwen'
-  id = 'qwen'
-  models = ['qwen3-coder']
-
-  async isAvailable(): Promise<boolean> {
-    return true
-  }
-
-  async connect(): Promise<void> {
-    this.connected = true
-  }
-
-  async disconnect(): Promise<void> {
-    this.connected = false
-  }
-
-  async listModels(): Promise<string[]> {
-    return this.models
-  }
-
-  async *stream(_messages: unknown[], _options: unknown = {}): AsyncGenerator<string, void, unknown> {
-    yield 'Qwen provider stub response.'
-  }
-
-  async complete(_messages: unknown[], _options: unknown = {}): Promise<string> {
-    return 'Qwen provider stub response.'
+export class QwenProvider extends OpenAICompatibleLocalProvider {
+  constructor() {
+    super({
+      id: 'qwen',
+      name: 'Qwen',
+      baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      defaultModels: ['qwen3-coder'],
+      offlineDetail: 'Qwen API is not configured yet.',
+      requiresApiKey: true,
+    })
+    this.kind = 'remote'
   }
 }

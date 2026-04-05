@@ -101,7 +101,7 @@ function App() {
   }, [refreshProviders])
 
   const fontSizeClass = ui.fontSize === 'sm' ? 'text-[13px]' : ui.fontSize === 'lg' ? 'text-[16px]' : 'text-[14px]'
-  const shellClass = ui.theme === 'light' ? 'bg-white' : 'bg-claude-bg'
+  const shellClass = 'app-shell'
   const selectedArtifact = artifacts.find((artifact) => artifact.id === selectedArtifactId) ?? artifacts[0] ?? null
   const latestRuntimeEvent = runtimeEvents[0] ?? null
   const layoutState = deriveLayoutState({
@@ -511,7 +511,7 @@ function App() {
   }
 
   return (
-    <div className={`flex h-screen flex-col text-claude-text font-inter ${fontSizeClass} ${shellClass} ${ui.compactMode ? 'tracking-tight' : ''}`}>
+    <div data-theme={ui.theme} className={`flex h-screen flex-col text-claude-text font-inter ${fontSizeClass} ${shellClass} theme-${ui.theme} ${ui.compactMode ? 'tracking-tight' : ''}`}>
       <TitleBar
         activePanel={activePanel}
         providers={providers}
